@@ -14,3 +14,7 @@ local.properties
 corpus/raw/
 __pycache__/
 *.pyc
+
+# Which key the harness reads as what, and where its last recording went. One person's
+# keyboard and one person's paths: useful to them every evening, meaningless to anyone else.
+.harness.properties

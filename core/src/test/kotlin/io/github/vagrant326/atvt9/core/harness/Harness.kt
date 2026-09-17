@@ -6,20 +6,26 @@ import io.github.vagrant326.atvt9.core.Keypad
 import io.github.vagrant326.atvt9.core.UserDictionary
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.Font
-import java.awt.GridLayout
-import java.awt.event.KeyAdapter
+import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
 import java.io.File
+import java.util.Properties
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.JButton
+import javax.swing.JComboBox
+import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.JSpinner
 import javax.swing.JTextArea
+import javax.swing.SpinnerNumberModel
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
 
@@ -28,26 +34,41 @@ import javax.swing.WindowConstants
  *
  * A television is a slow place to find out that a word is missing: sideload, walk to the sofa,
  * type on a remote, and the only thing that comes back is the one word the strip had room for.
- * Here the numeric keypad stands in for the remote and everything the engine knows is on screen
- * — the sequence, every candidate with its score, whether the sequence matches at all, and what
- * the user dictionary has learnt so far. It is the same [Session] the scripted runs use, so
- * anything found by hand can be pinned as a script afterwards.
+ * Here a PC keyboard stands in for the remote and everything the engine knows is on screen — the
+ * sequence, every candidate with its score, whether the sequence matches at all, and what the
+ * user dictionary has learnt so far.
+ *
+ * **Everything is set from the window, and what is set is remembered.** The command line still
+ * takes the same options, but nothing is only reachable that way: which key does what, which
+ * language, which text to copy out, where the record goes. A tool whose main use is sitting and
+ * typing into it is a tool nobody should have to configure by relaunching it.
  *
  *     ./gradlew :core:harness
- *     ./gradlew :core:harness --args="--layout remote --language pl"
  *     ./gradlew :core:harness --args="--keys 2255 0 63736"
- *     ./gradlew :core:harness --args="--targets bench/queries-v1.tsv --record bench/typing.tsv"
  *     ./gradlew :core:harness --args="--text pan-tadeusz.txt --chunk 4"
  *
- * `--keys` runs a script and prints the result, which needs no display and belongs in CI.
- * Without it a window opens. The token alphabet is [Session.tokenOf], and `--layout` is [Pad].
+ * `--keys` runs a script and prints the result, which needs no display and belongs in CI. Without
+ * it a window opens. The token alphabet is [Session.tokenOf].
  */
 fun main(arguments: Array<String>) {
     val options = arguments.toList().chunked(2).associate { it[0] to it.getOrElse(1) { "" } }
 
+    val settings = Settings(File(options["--settings"] ?: ".harness.properties"))
+    options["--language"]?.takeIf { it in LANGUAGES }?.let { settings.language = it }
+    options["--layout"]?.let { name ->
+        Pad.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?.let { settings.bindings.apply(it) }
+    }
+    options["--text"]?.let { settings.text = it }
+    options["--targets"]?.let { settings.targets = it }
+    options["--record"]?.let { settings.record = it }
+    options["--chunk"]?.toIntOrNull()?.let { settings.chunk = it }
+    options["--dictionary-pl"]?.let { settings.dictionary("pl", it) }
+    options["--dictionary-en"]?.let { settings.dictionary("en", it) }
+
     val dictionaries = LANGUAGES.associateWith { language ->
-        val path = options["--dictionary-$language"] ?: "app/src/main/assets/dictionary-$language.bin"
-        File(path).takeIf { it.exists() }?.inputStream()?.use { Dictionary.read(it) }
+        File(settings.dictionary(language)).takeIf { it.exists() }?.inputStream()
+            ?.use { Dictionary.read(it) }
     }
     for ((language, dictionary) in dictionaries) {
         System.err.println(
@@ -59,11 +80,9 @@ fun main(arguments: Array<String>) {
         )
     }
 
-    val language = options["--language"]?.takeIf { it in LANGUAGES } ?: "pl"
     val script = options["--keys"]
-
     if (script != null) {
-        val session = Session(dictionaries[language])
+        val session = Session(dictionaries[settings.language])
         session.run(script)
         println("keys   ${script.filter { !it.isWhitespace() }}")
         println("field  ${session.field}")
@@ -78,33 +97,19 @@ fun main(arguments: Array<String>) {
         return
     }
 
-    val pad = options["--layout"]
-        ?.let { name -> Pad.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
-        ?: Pad.NUMPAD
-
-    // Two sources of phrases to type, and a book is the more useful of them. What is being
-    // measured is a thumb against a key grid rather than a vocabulary, so an evening of copying
-    // out any Polish text supplies what a query corpus of twenty-six lines never could.
-    val text = options["--text"]?.let(::File)?.takeIf { it.exists() }
-    val targets = when {
-        text != null -> Recorder.fragmentsOf(text.readText(), options["--chunk"]?.toIntOrNull() ?: 4)
-        else -> File(options["--targets"] ?: "bench/queries-v1.tsv")
-            .takeIf { it.exists() }
-            ?.let(Recorder::targetsFrom)
-            .orEmpty()
-    }
-    val source = text?.nameWithoutExtension ?: "queries"
-    val recording = File(options["--record"] ?: "bench/typing.tsv")
-
     SwingUtilities.invokeLater {
-        Window(dictionaries, language, pad, targets, source, recording).isVisible = true
+        Window(dictionaries, settings).apply {
+            isVisible = true
+            // Launched from Gradle, so it opens behind the terminal the build was started from.
+            toFront()
+        }
     }
 }
 
 private val LANGUAGES = listOf("pl", "en")
 
 /**
- * Which digit a key on the numeric keypad stands for.
+ * Which digit a key on the numeric keypad stands for, as a starting point for the bindings.
  *
  * A remote runs `1 2 3` along the top of its number pad; a PC numpad runs `7 8 9`. The same nine
  * keys in the same three-by-three grid, upside down — so a sequence practised here is typed with
@@ -113,8 +118,8 @@ private val LANGUAGES = listOf("pl", "en")
  * mistyping here is the mistyping that happens there; that is worth nothing today and is the
  * whole experiment the moment a decoder starts modelling which key was meant.
  *
- * Only the numpad is turned. The number row is a line and has no geometry to preserve, and a
- * script is logical digits from end to end and is never touched by this at all.
+ * A preset rather than a mode: it writes the digit bindings and then has no further say, so
+ * anything rebound by hand afterwards stays rebound.
  */
 enum class Pad {
 
@@ -131,27 +136,80 @@ enum class Pad {
         digit in '7'..'9' -> digit - 6
         else -> digit // 4 5 6 are the middle row either way up, and 0 is not in the grid
     }
-
-    fun next(): Pad = entries[(ordinal + 1) % entries.size]
 }
 
 /**
- * The window.
+ * Everything the window can be set to, written to one file as it is set.
  *
- * Deliberately one panel of labels rather than a text field: a real editor would bring its own
- * caret, its own selection and its own idea of what a key means, and then the thing on screen
- * would be Swing's answer rather than the keyboard's. Everything here is drawn from [Session]
- * and nothing is drawn from a widget's state.
+ * Saved on every change rather than on exit. A harness is a thing people close by killing the
+ * Gradle daemon, and a setting that survives only a graceful shutdown is a setting that will be
+ * entered again tomorrow.
+ */
+class Settings(private val file: File) {
+
+    private val properties = Properties().apply {
+        if (file.exists()) {
+            file.inputStream().use(::load)
+        }
+    }
+
+    val bindings: Bindings = Bindings.load(properties)
+
+    var language: String
+        get() = properties.getProperty("language", "pl")
+        set(value) = set("language", value)
+
+    var text: String
+        get() = properties.getProperty("text", "")
+        set(value) = set("text", value)
+
+    var targets: String
+        get() = properties.getProperty("targets", "bench/queries-v1.tsv")
+        set(value) = set("targets", value)
+
+    var record: String
+        get() = properties.getProperty("record", "bench/typing.tsv")
+        set(value) = set("record", value)
+
+    var chunk: Int
+        get() = properties.getProperty("chunk", "4").toIntOrNull() ?: 4
+        set(value) = set("chunk", value.toString())
+
+    fun dictionary(language: String): String =
+        properties.getProperty("dictionary-$language", "app/src/main/assets/dictionary-$language.bin")
+
+    fun dictionary(language: String, path: String) = set("dictionary-$language", path)
+
+    fun save() {
+        bindings.save(properties)
+        file.outputStream().use { properties.store(it, "atv-t9 harness") }
+    }
+
+    private fun set(key: String, value: String) {
+        properties.setProperty(key, value)
+        save()
+    }
+}
+
+/**
+ * The window: what is being typed on the left, everything that can be changed on the right.
+ *
+ * The typing area is deliberately labels rather than a text field. A real editor brings its own
+ * caret, its own selection and its own idea of what a key means, and then what is on screen is
+ * Swing's answer rather than the keyboard's. Everything shown is read from [Session] and nothing
+ * from a widget.
+ *
+ * Keys are taken from a dispatcher on the focus manager rather than a listener on a panel,
+ * because the controls on the right are real buttons: with a listener the first click would move
+ * the focus and typing would stop working. The controls are all non-focusable for the same
+ * reason — they answer to the mouse and never to the keyboard, so nothing typed can press one.
  */
 private class Window(
     private val dictionaries: Map<String, Dictionary?>,
-    private var language: String,
-    private var pad: Pad,
-    private val targets: List<String>,
-    private val source: String,
-    private val recording: File,
+    private val settings: Settings,
 ) : JFrame("atv-t9 harness") {
 
+    private var language = settings.language
     private var session = Session(dictionaries[language], clock = System::currentTimeMillis)
 
     /** How much of `session.submitted` has reached the log already. */
@@ -160,9 +218,12 @@ private class Window(
     /** Set while typing phrases for the record rather than typing text. See [Recorder]. */
     private var recorder: Recorder? = null
 
+    /** Set while waiting for the key that a bind is being pointed at. */
+    private var capturing: Bind? = null
+
     private val fieldLabel = label(28f)
     private val stripLabel = label(18f)
-    private val statusLabel = label(14f)
+    private val statusLabel = label(13f)
     private val log = JTextArea().apply {
         isEditable = false
         background = BACKGROUND
@@ -171,133 +232,344 @@ private class Window(
         border = BorderFactory.createEmptyBorder(8, 12, 8, 12)
     }
 
+    private val bindButtons = Bind.entries.associateWith { bind ->
+        button("") { capture(bind) }
+    }
+    private val recordButton = button("Start recording") { toggleRecording() }
+    private val phrasesLabel = label(12f)
+    private val recordToLabel = label(12f)
+    private val chunkSpinner = JSpinner(SpinnerNumberModel(settings.chunk, 1, 20, 1)).apply {
+        isFocusable = false
+        addChangeListener {
+            settings.chunk = value as Int
+            refreshSources()
+        }
+    }
+
     init {
         defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
-        preferredSize = Dimension(920, 560)
+        preferredSize = Dimension(1240, 800)
 
-        val root = JPanel(BorderLayout()).apply {
+        val typing = JPanel(BorderLayout()).apply {
             background = BACKGROUND
             border = BorderFactory.createEmptyBorder(16, 16, 16, 16)
-            isFocusable = true
+            add(
+                JPanel().apply {
+                    background = BACKGROUND
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    add(fieldLabel)
+                    add(Box.createVerticalStrut(12))
+                    add(stripLabel)
+                    add(Box.createVerticalStrut(8))
+                    add(statusLabel)
+                },
+                BorderLayout.NORTH,
+            )
+            add(
+                JScrollPane(log).apply {
+                    border = BorderFactory.createEmptyBorder(12, 0, 0, 0)
+                    // A scroll pane paints its own viewport, and Swing's default for that is
+                    // white. Left alone it puts a lit panel in the middle of a dark window.
+                    viewport.background = BACKGROUND
+                    background = BACKGROUND
+                }
+            )
         }
 
-        val top = JPanel().apply {
+        contentPane = JPanel(BorderLayout()).apply {
             background = BACKGROUND
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(fieldLabel)
-            add(Box.createVerticalStrut(12))
-            add(stripLabel)
-            add(Box.createVerticalStrut(8))
-            add(statusLabel)
+            add(typing)
+            add(controls(), BorderLayout.EAST)
         }
 
-        root.add(top, BorderLayout.NORTH)
-        root.add(JScrollPane(log).apply { border = BorderFactory.createEmptyBorder(12, 0, 0, 0) })
-        root.add(legend(), BorderLayout.SOUTH)
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher { event ->
+            event.id == KeyEvent.KEY_PRESSED && isActive && handle(event)
+        }
 
-        root.addKeyListener(object : KeyAdapter() {
-            override fun keyPressed(event: KeyEvent) = handle(event)
-        })
-
-        contentPane = root
         pack()
         setLocationRelativeTo(null)
-        SwingUtilities.invokeLater { root.requestFocusInWindow() }
+        refreshBinds()
+        refreshSources()
         render()
     }
 
-    private fun handle(event: KeyEvent) {
-        if (event.keyCode == KeyEvent.VK_F5) {
-            toggleRecording()
-            render()
-            return
+    // ---- keys -------------------------------------------------------------------------------
+
+    /** Returns whether the key was the keyboard's, and therefore must not reach anything else. */
+    private fun handle(event: KeyEvent): Boolean {
+        val stroke = Stroke.of(event)
+
+        capturing?.let { bind ->
+            capturing = null
+            if (event.keyCode != KeyEvent.VK_ESCAPE) {
+                settings.bindings.rebind(bind, stroke)
+                settings.save()
+            }
+            refreshBinds()
+            return true
         }
+
+        val action = settings.bindings.actionFor(stroke) ?: return false
         recorder?.let {
-            record(it, event)
+            record(it, action)
             render()
-            return
+            return true
         }
-        when {
-            event.keyCode == KeyEvent.VK_F1 -> switchLanguage()
-            event.keyCode == KeyEvent.VK_F2 -> reset(forget = true)
-            event.keyCode == KeyEvent.VK_F3 -> reset(forget = false)
-            event.keyCode == KeyEvent.VK_F4 -> pad = pad.next()
-            else -> actionFor(event, pad)?.let(session::press) ?: return
-        }
+        session.press(action)
         render()
+        return true
     }
 
     /**
-     * Starts or stops typing phrases for the record.
+     * Points a bind at whatever is pressed next: click the row's button, then press the key.
      *
-     * A separate mode rather than a log of ordinary use, because the two measure different
-     * things. Ordinary use here is a person exploring a dictionary; a recording is a person
-     * typing a known phrase as fast as they intend to on the sofa, and only the second one can
-     * be aligned against what was meant.
+     * Capture rather than a list to pick from. What somebody wants to say is "this key, the one
+     * under my thumb", and they know it by where it is rather than by what Swing calls it — which
+     * for the key this project most wanted on the remote turned out to be keycode 300.
+     *
+     * Escape cancels, and clicking a different row moves the capture rather than arming two.
      */
-    private fun toggleRecording() {
-        recorder = when {
-            recorder != null -> {
-                log.append("-- recording stopped\n")
-                null
-            }
-
-            targets.isEmpty() -> {
-                log.append("-- nothing to type: point --targets at a TSV of phrases\n")
-                null
-            }
-
-            else -> Recorder(recording, targets, source).also {
-                val resumed = if (it.position > 0) ", resuming at ${it.position + 1}" else ""
-                log.append("-- $source: ${targets.size} phrases into ${recording.path}$resumed\n")
-                log.append("-- type each one at full speed and press Enter; do not fix mistakes\n")
-            }
+    private fun capture(bind: Bind) {
+        refreshBinds()
+        capturing = bind
+        bindButtons.getValue(bind).apply {
+            text = "press a key…"
+            foreground = Color.BLACK
+            background = ACCENT
+            isOpaque = true
         }
     }
 
     /**
      * The keys while recording, which are the remote's number keys and nothing else.
      *
-     * No candidate walk, no case, no spelling. Every one of those is a decision taken while
+     * No candidate walk, no case, no spelling: every one of those is a decision taken while
      * reading the screen, and a recording made while reading the screen measures a different
-     * activity from the one the decoder exists to survive.
+     * activity from the one the decoder exists to survive. The three that remain are about the
+     * recording rather than about the text — accept it, take back a press, start the phrase again.
      */
-    private fun record(recorder: Recorder, event: KeyEvent) {
-        val digit = digitOf(event.keyCode)?.let { pad.read(it, isNumpad(event.keyCode)) }
-        when {
-            digit != null -> recorder.press(digit, System.currentTimeMillis())
-            event.keyCode == KeyEvent.VK_BACK_SPACE -> recorder.undo()
-            event.keyCode == KeyEvent.VK_ESCAPE -> recorder.restart()
-            event.keyCode == KeyEvent.VK_ENTER -> recorder.accept()
-            event.keyCode == KeyEvent.VK_F6 -> recorder.skip()
+    private fun record(recorder: Recorder, action: Action) {
+        when (action) {
+            is Action.Digit -> recorder.press(action.digit, System.currentTimeMillis())
+            Action.Space -> recorder.press('0', System.currentTimeMillis())
+            Action.Commit -> recorder.accept()
+            Action.Delete -> recorder.undo()
+            Action.Abandon -> recorder.restart()
             else -> return
         }
         if (recorder.isFinished) {
-            log.append("-- ${targets.size} phrases done, written to ${recording.path}\n")
-            this.recorder = null
+            log.append("-- ${recorder.targets.size} phrases done, written to ${settings.record}\n")
+            stopRecording()
         }
     }
 
-    private fun switchLanguage() {
-        language = LANGUAGES[(LANGUAGES.indexOf(language) + 1) % LANGUAGES.size]
-        session.dictionary = dictionaries[language]
+    // ---- controls ---------------------------------------------------------------------------
+
+    private fun controls(): Component {
+        val panel = JPanel().apply {
+            background = BACKGROUND
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = BorderFactory.createEmptyBorder(16, 8, 16, 16)
+        }
+
+        panel.add(heading("Dictionary"))
+        panel.add(
+            row(
+                "language",
+                JComboBox(LANGUAGES.toTypedArray()).apply {
+                    isFocusable = false
+                    selectedItem = language
+                    addActionListener {
+                        language = selectedItem as String
+                        settings.language = language
+                        session.dictionary = dictionaries[language]
+                        render()
+                    }
+                },
+            )
+        )
+        panel.add(row("", button("Clear what was learnt") { reset(forget = true) }))
+        panel.add(row("", button("Clear the field") { reset(forget = false) }))
+
+        panel.add(heading("Keys"))
+        panel.add(
+            row(
+                "numpad reads as",
+                JComboBox(Pad.entries.map { it.name.lowercase() }.toTypedArray()).apply {
+                    isFocusable = false
+                    addActionListener {
+                        settings.bindings.apply(Pad.entries[selectedIndex])
+                        settings.save()
+                        refreshBinds()
+                    }
+                },
+            )
+        )
+        for (bind in Bind.entries) {
+            panel.add(row(labelOf(bind), bindButtons.getValue(bind)))
+        }
+
+        panel.add(heading("Recording"))
+        panel.add(phrasesLabel)
+        panel.add(row("", button("Copy out a text…") { chooseText() }))
+        panel.add(row("", button("Type a query list…") { chooseTargets() }))
+        panel.add(row("words per phrase", chunkSpinner))
+        panel.add(recordToLabel)
+        panel.add(row("", button("Write the record to…") { chooseRecord() }))
+        panel.add(row("", recordButton))
+
+        return JScrollPane(panel).apply {
+            background = BACKGROUND
+            viewport.background = BACKGROUND
+            border = BorderFactory.createEmptyBorder()
+            preferredSize = Dimension(370, 0)
+            verticalScrollBar.unitIncrement = 16
+        }
     }
 
+    private fun heading(text: String) = label(12f).apply {
+        foreground = ACCENT
+        this.text = text.uppercase()
+        border = BorderFactory.createEmptyBorder(14, 0, 5, 0)
+        alignmentX = LEFT_ALIGNMENT
+    }
+
+    private fun row(name: String, control: Component) = JPanel(BorderLayout(8, 0)).apply {
+        background = BACKGROUND
+        maximumSize = Dimension(Int.MAX_VALUE, 26)
+        alignmentX = LEFT_ALIGNMENT
+        if (name.isNotEmpty()) {
+            add(label(12f).apply { text = name }, BorderLayout.WEST)
+        }
+        add(control, BorderLayout.EAST)
+    }
+
+    private fun button(text: String, onClick: () -> Unit) = JButton(text).apply {
+        isFocusable = false
+        font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
+        addActionListener { onClick() }
+    }
+
+    /** The letters a number key carries, so the list reads like the remote rather than like code. */
+    private fun labelOf(bind: Bind): String = when (bind) {
+        Bind.KEY_0 -> "0   space"
+        Bind.KEY_1 -> "1   marks"
+        Bind.NEXT -> "next candidate"
+        Bind.PREVIOUS -> "previous candidate"
+        Bind.DELETE -> "delete"
+        Bind.DELETE_WORD -> "delete the word"
+        Bind.COMMIT -> "OK"
+        Bind.CAPS -> "capitals"
+        Bind.SPELL -> "spell it out"
+        Bind.ABANDON -> "abandon the word"
+        Bind.SETTLE -> "multitap timeout"
+        else -> "${bind.digit}   ${Keypad.lettersOn(bind.digit!!)}"
+    }
+
+    private fun chooseText() = choose("Text to copy out")?.let { file ->
+        settings.text = file.path
+        refreshSources()
+    }
+
+    private fun chooseTargets() = choose("Query list (TSV)")?.let { file ->
+        settings.text = ""
+        settings.targets = file.path
+        refreshSources()
+    }
+
+    private fun chooseRecord() = choose("Write the record to", save = true)?.let { file ->
+        settings.record = file.path
+        refreshSources()
+    }
+
+    private fun choose(title: String, save: Boolean = false): File? {
+        val chooser = JFileChooser(File(".").absoluteFile)
+        chooser.dialogTitle = title
+        val answer = if (save) chooser.showSaveDialog(this) else chooser.showOpenDialog(this)
+        return chooser.selectedFile.takeIf { answer == JFileChooser.APPROVE_OPTION }
+    }
+
+    // ---- recording --------------------------------------------------------------------------
+
     /**
-     * A fresh field, and on F2 a fresh user dictionary with it.
+     * The phrases to type: a text cut into fragments, or a list of queries.
+     *
+     * A book is the more useful of the two and that is not obvious. What is being measured is a
+     * thumb against a key grid rather than a vocabulary, so an evening of copying out any Polish
+     * text supplies what a query corpus of twenty-six lines never could.
+     */
+    private fun phrases(): Pair<String, List<String>> {
+        val text = settings.text.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.exists() }
+        if (text != null) {
+            return text.nameWithoutExtension to Recorder.fragmentsOf(text.readText(), settings.chunk)
+        }
+        val targets = File(settings.targets).takeIf { it.exists() } ?: return "queries" to emptyList()
+        return "queries" to Recorder.targetsFrom(targets)
+    }
+
+    private fun toggleRecording() {
+        if (recorder != null) {
+            log.append("-- recording stopped\n")
+            stopRecording()
+            return
+        }
+
+        val (source, targets) = phrases()
+        if (targets.isEmpty()) {
+            log.append("-- nothing to type: choose a text or a query list first\n")
+            return
+        }
+
+        val recorder = Recorder(File(settings.record), targets, source)
+        this.recorder = recorder
+        recordButton.text = "Stop recording"
+        val resumed = if (recorder.position > 0) ", resuming at ${recorder.position + 1}" else ""
+        log.append("-- $source: ${targets.size} phrases into ${settings.record}$resumed\n")
+        log.append("-- type each one at full speed and press OK; do not fix mistakes\n")
+        render()
+    }
+
+    private fun stopRecording() {
+        recorder = null
+        recordButton.text = "Start recording"
+        render()
+    }
+
+    // ---- rendering --------------------------------------------------------------------------
+
+    /**
+     * A fresh field, and on request a fresh user dictionary with it.
      *
      * The distinction is the whole point of the two figures the benchmark prints. Cold is a word
-     * the keyboard has never seen; warm is the same word typed a second time. Both are one
-     * keypress away here, because a harness where the only reachable state is warm would flatter
-     * the method exactly where it is weakest.
+     * the keyboard has never seen; warm is the same word typed a second time. Both are one click
+     * away here, because a harness whose only reachable state is warm would flatter the method
+     * exactly where it is weakest.
      */
     private fun reset(forget: Boolean) {
-        val user = if (forget) UserDictionary() else session.user
         if (forget) {
             log.append("-- user dictionary cleared\n")
         }
+        val user = if (forget) UserDictionary() else session.user
         session = Session(dictionaries[language], user, clock = System::currentTimeMillis)
         logged = 0
+        render()
+    }
+
+    private fun refreshBinds() {
+        capturing = null
+        for ((bind, button) in bindButtons) {
+            val keys = settings.bindings[bind]
+            button.text = if (keys.isEmpty()) "—" else keys.joinToString(" / ") { it.text }
+            button.isOpaque = false
+            button.background = null
+            button.foreground = null
+        }
+    }
+
+    private fun refreshSources() {
+        val (source, targets) = phrases()
+        phrasesLabel.text = "$source — ${targets.size} phrases"
+        recordToLabel.text = "record: ${settings.record}"
     }
 
     private fun render() {
@@ -332,7 +604,6 @@ private class Window(
             span(
                 listOf(
                     "lang $language",
-                    "pad ${pad.name.lowercase()}",
                     "keys ${session.sequence.ifEmpty { "—" }}",
                     "mode ${session.mode.name.lowercase()}",
                     "case ${session.case.name.lowercase()}",
@@ -360,11 +631,8 @@ private class Window(
         stripLabel.text = html(span(recorder.pressed.ifEmpty { "—" }, ACCENT))
         statusLabel.text = html(
             span(
-                listOf(
-                    "recording ${recorder.position + 1} of ${recorder.targets.size}",
-                    "pad ${pad.name.lowercase()}",
-                    "Enter accepts   Esc restarts   F6 skips   F5 stops",
-                ).joinToString("   "),
+                "recording ${recorder.position + 1} of ${recorder.targets.size}" +
+                    "   OK accepts   delete takes back a press   back starts the phrase again",
                 DIM,
             )
         )
@@ -376,15 +644,6 @@ private class Window(
         alignmentX = LEFT_ALIGNMENT
     }
 
-    private fun legend() = JPanel(GridLayout(0, 2, 24, 2)).apply {
-        background = BACKGROUND
-        border = BorderFactory.createEmptyBorder(12, 0, 0, 0)
-        for ((keys, meaning) in LEGEND) {
-            add(label(13f).apply { foreground = FOREGROUND; text = keys })
-            add(label(13f).apply { foreground = DIM; text = meaning })
-        }
-    }
-
     private companion object {
 
         val BACKGROUND: Color = Color(0x12, 0x14, 0x18)
@@ -392,72 +651,6 @@ private class Window(
         val ACCENT: Color = Color(0x7F, 0xC2, 0xFF)
         val WARN: Color = Color(0xFF, 0x9C, 0x6B)
         val DIM: Color = Color(0x80, 0x88, 0x96)
-
-        /**
-         * The remote, on a PC keyboard.
-         *
-         * The number keys map to themselves, which is the whole reason a numeric keypad is worth
-         * using here. The rest are the keys the remote spends on one job each, and the holds are
-         * given their own keys rather than a real hold: a hold on a PC keyboard auto-repeats, so
-         * holding `0` would cycle the case as fast as the key repeat rate and nobody could aim it.
-         */
-        val LEGEND = listOf(
-            "2 – 9" to "one press per letter",
-            "0" to "finish the word, add a space",
-            "1" to "cycle . , - ' & : /",
-            "← →  /  ↓" to "walk the candidates",
-            "↑  /  Backspace" to "delete",
-            "Shift + Backspace" to "delete the word",
-            "Enter" to "finish the word, or submit the field",
-            "Esc" to "abandon the word",
-            "+  (or Shift + 0)" to "capitals: abc → Abc → ABC",
-            "*  (or Shift + 1)" to "spell it out, letter by letter",
-            "/" to "end the multitap letter (the timeout)",
-            "F1  /  F2  /  F3" to "language  /  clear what was learnt  /  clear the field",
-            "F4" to "numpad as itself, or as a remote (789 becomes 123)",
-            "F5" to "record: type the phrases shown, fast, mistakes and all",
-        )
-
-        /**
-         * Which press an event is, or null for a key that is not on the remote.
-         *
-         * Numpad and number row both, because the numpad is what makes this feel like the remote
-         * and the row is what a laptop has. `VK_ADD` and `VK_MULTIPLY` carry the two holds so the
-         * gesture stays one key: `Shift + 0` is also accepted, but on a numpad Shift turns the
-         * digit keys into their navigation meanings and the press never arrives as a digit at all.
-         */
-        fun actionFor(event: KeyEvent, pad: Pad): Action? {
-            val digit = digitOf(event.keyCode)?.let { pad.read(it, isNumpad(event.keyCode)) }
-            return when {
-                digit != null && digit == '0' && event.isShiftDown -> Action.Caps
-                digit != null && digit == '1' && event.isShiftDown -> Action.Spell
-                digit != null && Keypad.isDigit(digit) -> Action.Digit(digit)
-                digit == '0' -> Action.Space
-                digit == '1' -> Action.Punctuation
-
-                event.keyCode == KeyEvent.VK_ADD || event.keyCode == KeyEvent.VK_PLUS -> Action.Caps
-                event.keyCode == KeyEvent.VK_MULTIPLY -> Action.Spell
-                event.keyCode == KeyEvent.VK_DIVIDE -> Action.Settle
-
-                event.keyCode == KeyEvent.VK_RIGHT || event.keyCode == KeyEvent.VK_DOWN -> Action.Next
-                event.keyCode == KeyEvent.VK_LEFT -> Action.Previous
-
-                event.keyCode == KeyEvent.VK_BACK_SPACE || event.keyCode == KeyEvent.VK_UP ->
-                    if (event.isShiftDown) Action.DeleteWord else Action.Delete
-
-                event.keyCode == KeyEvent.VK_ENTER -> Action.Commit
-                event.keyCode == KeyEvent.VK_ESCAPE -> Action.Abandon
-                else -> null
-            }
-        }
-
-        fun digitOf(keyCode: Int): Char? = when (keyCode) {
-            in KeyEvent.VK_0..KeyEvent.VK_9 -> '0' + (keyCode - KeyEvent.VK_0)
-            in KeyEvent.VK_NUMPAD0..KeyEvent.VK_NUMPAD9 -> '0' + (keyCode - KeyEvent.VK_NUMPAD0)
-            else -> null
-        }
-
-        fun isNumpad(keyCode: Int): Boolean = keyCode in KeyEvent.VK_NUMPAD0..KeyEvent.VK_NUMPAD9
 
         fun html(body: String) = "<html><body>$body</body></html>"
 
