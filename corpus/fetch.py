@@ -19,6 +19,8 @@ import gzip
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -79,7 +81,19 @@ def fetch_subtitles(language: str, megabytes: int) -> str:
     return target
 
 
-def fetch_page(selector: str, language: str, limit: int, offset: int) -> list[str]:
+def fetch_page(selector: str, language: str, limit: int, offset: int, tries: int = 4) -> list[str]:
+    """One page, retried, because the endpoint fails far more often than it succeeds badly.
+
+    A run of this returned twenty thousand labels of an expected hundred and twenty thousand: the
+    film pages timed out, and every musician page came back 500, 502 or as truncated JSON. None of
+    that is an error here in any visible sense — the pipeline simply ends up with a fifth of the
+    data it thinks it has, and the dictionary and the word pairs built from it are quietly worse in
+    exactly the domain this keyboard exists for.
+
+    So a failed page is retried with a widening pause rather than skipped on the first refusal.
+    What is still missing after that is reported as a count, which is the number to disbelieve the
+    corpus by.
+    """
     query = TITLES_QUERY.format(
         selector=selector, language=language, limit=limit, offset=offset
     )
@@ -88,9 +102,22 @@ def fetch_page(selector: str, language: str, limit: int, offset: int) -> list[st
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"},
     )
-    with urllib.request.urlopen(request, timeout=180) as response:
-        payload = json.load(response)
-    return [row["label"]["value"] for row in payload["results"]["bindings"]]
+
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                payload = json.load(response)
+            return [row["label"]["value"] for row in payload["results"]["bindings"]]
+        except Exception as failure:  # noqa: BLE001 - every failure here is worth one more try
+            if attempt == tries - 1:
+                raise
+            pause = 5 * (attempt + 1)
+            print(
+                f"  {selector.split()[2]} offset {offset}: {failure}; again in {pause}s",
+                file=sys.stderr,
+            )
+            time.sleep(pause)
+    return []
 
 
 def fetch_titles(language: str, per_page: int, pages: int) -> str:
