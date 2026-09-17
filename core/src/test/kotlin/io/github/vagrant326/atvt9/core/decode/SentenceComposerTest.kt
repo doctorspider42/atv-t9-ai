@@ -68,15 +68,43 @@ class SentenceComposerTest {
     }
 
     @Test
-    fun `the space is a press like any other, not a commit`() {
+    fun `a pressed space settles what came before it and nothing after`() {
         val composer = composer()
         composer.press('5')
         composer.press('0')
+
+        // Settled, handed over once, and never the composition's business again.
+        assertEquals("read 5 ", composer.takeFinished())
+        assertEquals("", composer.takeFinished())
+        assertFalse(composer.isComposing)
+
+        composer.press('6')
+        composer.settle()
+        assertEquals("read 6", composer.text)
+    }
+
+    @Test
+    fun `a space that was never pressed costs nothing, which is the whole point`() {
+        val composer = composer()
+        composer.press('5')
         composer.press('6')
         composer.settle()
 
-        assertEquals("read 506", composer.text)
-        assertTrue(composer.isComposing)
+        // Two words or one is the decoder's business; the composition keeps the run whole.
+        assertEquals("read 56", composer.text)
+        assertEquals("", composer.takeFinished())
+    }
+
+    @Test
+    fun `a space over presses that read as nothing leaves them in the air`() {
+        val empty = SentenceComposer(object : Decoder {
+            override fun decode(keys: String, limit: Int) = emptyList<Hypothesis>()
+        })
+        empty.press('5')
+        empty.press('0')
+
+        assertEquals("", empty.takeFinished())
+        assertTrue(empty.isComposing)
     }
 
     @Test
@@ -111,6 +139,7 @@ class SentenceComposerTest {
         composer.press('6') // never settled: a commit landing here must not send "read 5"
 
         assertEquals("read 56", composer.commit())
+        assertEquals("", composer.takeFinished())
         assertFalse(composer.isComposing)
         assertEquals("", composer.text)
     }

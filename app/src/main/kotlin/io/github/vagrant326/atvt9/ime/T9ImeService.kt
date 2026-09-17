@@ -492,8 +492,8 @@ class T9ImeService : InputMethodService() {
         when (action) {
             is Action.Digit -> composer.press(action.digit)
 
-            // The space is a press like any other now. Skipping it is the thing this whole
-            // mechanism exists to forgive, so it cannot also be the thing that commits.
+            // Skipping the space is forgiven; pressing it is meant. It settles everything before
+            // it, which then belongs to the field and is not revised again.
             is Action.Space -> composer.press('0')
 
             is Action.Delete -> if (!composer.delete()) {
@@ -528,9 +528,30 @@ class T9ImeService : InputMethodService() {
             }
         }
 
+        drain(composer)
         clock.removeCallbacks(settling)
         clock.postDelayed(settling, SETTLE_MILLIS)
         return true
+    }
+
+    /**
+     * Moves anything the composition has settled into the field.
+     *
+     * Once it is there it is the field's, not the keyboard's: no copy is kept and nothing later
+     * rewrites it. That is the promise a pressed space makes.
+     */
+    private fun drain(composer: SentenceComposer) {
+        val settled = composer.takeFinished()
+        if (settled.isEmpty()) {
+            return
+        }
+        currentInputConnection?.commitText(letterCase.apply(settled), 1)
+        letterCase = letterCase.afterWord()
+        if (mayLearn) {
+            settled.trim().split(' ').filter { it.isNotEmpty() }
+                .forEach { userWords.dictionary.learn(it) }
+            userWords.flush()
+        }
     }
 
     /** Puts the reading into the field, and remembers its words so the next time is cheaper. */

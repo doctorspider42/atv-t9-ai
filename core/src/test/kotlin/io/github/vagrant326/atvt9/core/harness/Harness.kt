@@ -279,6 +279,13 @@ private class Window(
     /** Queries sent while reading whole sentences, which the composition itself does not keep. */
     private val submitted = mutableListOf<String>()
 
+    /**
+     * What a pressed space has already settled, standing in for the editor the keyboard would be
+     * writing into. The composition hands it over once and then knows nothing about it, exactly as
+     * on the device.
+     */
+    private val sentence = StringBuilder()
+
     private var showing = TYPING
 
     private val screens = CardLayout()
@@ -388,19 +395,30 @@ private class Window(
         when (action) {
             is Action.Digit -> decoding.press(action.digit)
             Action.Space -> decoding.press('0')
-            Action.Delete -> decoding.delete()
+            Action.Delete -> if (!decoding.delete()) {
+                // Nothing left in the air, so this belongs to what has already been settled.
+                if (sentence.isNotEmpty()) {
+                    sentence.setLength(sentence.length - 1)
+                }
+            }
             Action.Next -> decoding.next(forward = true)
             Action.Previous -> decoding.next(forward = false)
-            Action.DeleteWord, Action.Abandon -> decoding.clear()
+            Action.DeleteWord, Action.Abandon -> {
+                decoding.clear()
+                sentence.setLength(0)
+            }
+
             Action.Commit -> {
-                val sent = decoding.commit()
+                val sent = (sentence.toString() + decoding.commit()).trim()
                 if (sent.isNotEmpty()) {
                     submitted.add(sent)
                 }
+                sentence.setLength(0)
             }
 
             else -> Unit
         }
+        sentence.append(decoding.takeFinished())
     }
 
     /**
@@ -777,7 +795,8 @@ private class Window(
     private fun renderSentence() {
         val waiting = decoding.stale && decoding.isComposing
         fieldLabel.text = html(
-            span(escape(decoding.text), FOREGROUND) +
+            span(escape(sentence.toString()), FOREGROUND) +
+                span(escape(decoding.text), ACCENT, underline = true) +
                 span(if (waiting) "&nbsp;…" else "&nbsp;|", DIM)
         )
 

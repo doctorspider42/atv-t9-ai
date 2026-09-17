@@ -3,10 +3,16 @@ package io.github.vagrant326.atvt9.core.decode
 /**
  * A whole query held as presses, and the sentences they might be.
  *
- * The difference from `T9Engine` is the one the decoder exists for: nothing is committed while
- * typing. The engine ends a word at every `0` and throws its keys away, so by the time the
- * eleventh press reveals that the second word was wrong there is nothing left to revise. Here the
- * presses stay until the query is sent, and every new one may change any word before it.
+ * The difference from `T9Engine` is the one the decoder exists for: a run of presses is read as
+ * however many words it takes, so a space that was never pressed costs nothing to leave out. The
+ * engine ends a word at every `0` and reads each one alone, and a run with no `0` in it is
+ * therefore one long word that spells nothing.
+ *
+ * **But a space that *is* pressed still ends what came before it**, the way it does on a phone.
+ * Skipping it is forgiven; pressing it is meant. Everything before it is settled, handed to the
+ * field and not revised again, and only the presses since are still in the air. Left revisable to
+ * the end, a query would rewrite words the user had already watched come out right, which is a
+ * worse thing to do to somebody than making them press a key they meant to press anyway.
  *
  * **Decoding does not happen on the press.** At five presses a second a decode per press is work
  * thrown away four times in five, and nobody reads the screen mid-word at that speed — which is
@@ -18,8 +24,22 @@ package io.github.vagrant326.atvt9.core.decode
  */
 class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5) {
 
+    private companion object {
+        /** Key `0`: a space in the text, and a line under everything typed before it. */
+        const val SPACE = '0'
+    }
+
     private val keys = StringBuilder()
     private var readings: List<Hypothesis> = emptyList()
+
+    /**
+     * Text that has just been settled and is waiting to be handed over, once.
+     *
+     * A buffer rather than a record: the caller takes it, puts it in the field, and from then on
+     * it belongs to the field. Keeping a second copy here would mean two places that believe they
+     * know what the field says, and they would disagree the first time anything else wrote to it.
+     */
+    private val finished = StringBuilder()
 
     /** Whether the presses have moved on since the readings were worked out. */
     var stale: Boolean = false
@@ -41,10 +61,46 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
     /** The words of the reading in hand, for a caller that has to learn or correct them. */
     val words: List<DecodedWord> get() = readings.getOrNull(selected)?.words.orEmpty()
 
+    /**
+     * One press. `0` settles what came before it instead of joining it.
+     *
+     * A `0` over presses that read as nothing is swallowed, and they stay in the air. The
+     * alternative is settling something with no reading, which means either losing the presses or
+     * putting digits in the field, and both are worse than a space that appears not to have
+     * worked while the strip is saying it has nothing.
+     */
     fun press(digit: Char) {
+        if (digit == SPACE) {
+            settleSegment()
+            return
+        }
         keys.append(digit)
         stale = true
         selected = 0
+    }
+
+    /** Text settled since this was last called, for the caller to put in the field. */
+    fun takeFinished(): String {
+        val text = finished.toString()
+        finished.setLength(0)
+        return text
+    }
+
+    private fun settleSegment() {
+        if (keys.isEmpty()) {
+            finished.append(' ')
+            return
+        }
+        settle()
+        val reading = text
+        if (reading.isEmpty()) {
+            return
+        }
+        finished.append(reading).append(' ')
+        keys.setLength(0)
+        readings = emptyList()
+        selected = 0
+        stale = false
     }
 
     /** Returns false when there was nothing left to take back, so the caller can delete instead. */
@@ -82,15 +138,21 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
         stale = false
     }
 
-    /** Settles, hands back what should reach the field, and starts again. Empty if nothing reads. */
+    /**
+     * Settles what is still in the air and hands it back, along with anything waiting.
+     *
+     * What comes back is everything that has not reached the field yet, which after a run of
+     * spaces is usually just the last word.
+     */
     fun commit(): String {
         settle()
-        val reading = text
+        val reading = finished.toString() + text
         clear()
         return reading
     }
 
     fun clear() {
+        finished.setLength(0)
         keys.setLength(0)
         readings = emptyList()
         selected = 0
