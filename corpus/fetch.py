@@ -121,29 +121,54 @@ def fetch_page(selector: str, language: str, limit: int, offset: int, tries: int
 
 
 def fetch_titles(language: str, per_page: int, pages: int) -> str:
-    """Film, series, actor and musician labels. A failed page is skipped, not fatal."""
+    """Film, series, actor and musician labels, merged with whatever is already on disk.
+
+    Merged, and written once at the end. The endpoint fails in bursts and refuses some pages
+    outright, so a second run with a smaller page size is the ordinary way to fill the gaps a
+    first one left. Opening the file for writing at the start throws away the good half in order
+    to try for the other — which is how a retry ends with less than it started with, and did:
+    thirty-five thousand labels became six.
+
+    A page that never arrives is counted rather than logged and forgotten. That count is the
+    number by which to disbelieve the corpus, and without it a fifth of the data looks like all
+    of it.
+    """
     target = os.path.join(RAW, f"titles-{language}.txt")
-    total = 0
-    with open(target, "w", encoding="utf-8") as out:
-        for name, selector in SELECTORS.items():
-            kept = 0
-            for page in range(pages):
-                try:
-                    labels = fetch_page(selector, language, per_page, page * per_page)
-                except Exception as failure:  # noqa: BLE001 - reported, then skipped
-                    print(f"titles {name} {language} page {page}: {failure}", file=sys.stderr)
-                    continue
-                if not labels:
-                    break
-                for label in labels:
-                    line = normalise(label, language)
-                    if len(line) < 2:
-                        continue
-                    out.write(line + "\n")
+
+    labels = set()
+    if os.path.exists(target):
+        with open(target, encoding="utf-8") as existing:
+            labels = {line.strip() for line in existing if line.strip()}
+        print(f"titles-{language}.txt: {len(labels):,} already here", file=sys.stderr)
+
+    missing = 0
+    for name, selector in SELECTORS.items():
+        kept = 0
+        for page in range(pages):
+            try:
+                found = fetch_page(selector, language, per_page, page * per_page)
+            except Exception as failure:  # noqa: BLE001 - reported, then counted
+                print(f"titles {name} {language} page {page} gave up: {failure}", file=sys.stderr)
+                missing += 1
+                continue
+            if not found:
+                break
+            for label in found:
+                line = normalise(label, language)
+                if len(line) >= 2:
+                    labels.add(line)
                     kept += 1
-            total += kept
-            print(f"titles {name} {language}: {kept}", file=sys.stderr)
-    print(f"titles-{language}.txt  {total} labels", file=sys.stderr)
+        print(f"titles {name} {language}: {kept}", file=sys.stderr)
+
+    with open(target, "w", encoding="utf-8") as out:
+        for line in sorted(labels):
+            out.write(line + "\n")
+
+    print(
+        f"titles-{language}.txt  {len(labels):,} labels"
+        + (f", {missing} pages never arrived" if missing else ""),
+        file=sys.stderr,
+    )
     return target
 
 
