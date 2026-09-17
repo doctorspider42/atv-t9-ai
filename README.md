@@ -41,6 +41,36 @@ in the programme. Neither figure describes the keyboard on its own, which is why
 ./gradlew :core:bench
 ```
 
+## Trying it without a television
+
+Three ways in, in increasing order of how much they cost to set up.
+
+**On a PC keyboard**, with every candidate and its score on screen and nothing hidden behind a
+strip that has room for four words:
+
+```bash
+./gradlew :core:harness
+```
+
+**On a television that is not one**, which is an Android TV emulator. The task boots it, installs
+the dev build and makes it the keyboard:
+
+```bash
+./gradlew :app:tv
+```
+
+It leaves an already attached device alone, so the same task installs onto the real television
+over `adb connect`. It will not download a system image or create the virtual device — both are
+large and slow and yours to decide on — and says what to run if the device is missing. Point it at
+another with `-Pavd=<name>`.
+
+One thing it does that nobody guesses: `show_ime_with_hard_keyboard`. Android hides every soft
+keyboard while a hardware one is attached and an emulator always has one, so without it the
+keyboard is installed, selected and completely deaf, with nothing on screen to say why.
+
+**On the television itself**, which is the only place the figures mean anything, and the reason
+the dev channel installs alongside the released build rather than over it.
+
 ## How it types
 
 | Key | What it does |
