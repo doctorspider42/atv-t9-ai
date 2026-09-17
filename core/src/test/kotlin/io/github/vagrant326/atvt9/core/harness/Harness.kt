@@ -578,10 +578,11 @@ private class Window(
             return
         }
 
-        val started = Recorder(File(settings.record), targets, source)
+        val started = Recorder(File(settings.record), targets, source, settings.pad)
         recorder = started
         val resumed = if (started.position > 0) ", resuming at ${started.position + 1}" else ""
         note("$source: ${targets.size} phrases into ${settings.record}$resumed")
+        note("the numpad is being read as ${settings.pad.name.lowercase()}")
         note("type each one at full speed and press OK; do not fix mistakes")
         show(TYPING)
     }
@@ -697,9 +698,12 @@ private class Window(
     private fun renderRecording(recorder: Recorder) {
         fieldLabel.text = html(span(escape(recorder.target), FOREGROUND))
         stripLabel.text = html(span(recorder.pressed.ifEmpty { "—" }, ACCENT))
+        // The pad is on screen throughout, and it is here rather than only in the settings because
+        // the first recording ever made was made through the wrong one and nothing said so.
         statusLabel.text = html(
             span(
-                "OK accepts   ·   delete takes back a press   ·   back starts the phrase again",
+                "numpad reads as ${settings.pad.name.lowercase()}   ·   OK accepts   ·   " +
+                    "delete takes back a press   ·   back starts the phrase again",
                 DIM,
             )
         )

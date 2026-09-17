@@ -13,7 +13,7 @@ class RecorderTest {
     lateinit var directory: File
 
     private fun recorder(vararg targets: String) =
-        Recorder(File(directory, "typing.tsv"), targets.toList(), source = "book")
+        Recorder(File(directory, "typing.tsv"), targets.toList(), "book", Pad.REMOTE)
 
     @Test
     fun `an attempt is written with its phrase and its timings`() {
@@ -24,7 +24,7 @@ class RecorderTest {
         recorder.accept()
 
         assertEquals(
-            listOf(Recorder.HEADER, "book\t0\tkot\t568\t0,120,70"),
+            listOf(Recorder.HEADER, "book\t0\tremote\tkot\t568\t0,120,70"),
             File(directory, "typing.tsv").readLines(),
         )
     }
@@ -38,7 +38,10 @@ class RecorderTest {
         recorder.press('6', atMillis = 200)
         recorder.accept()
 
-        assertEquals("book\t0\tkot\t56\t0,200", File(directory, "typing.tsv").readLines()[1])
+        assertEquals(
+            "book\t0\tremote\tkot\t56\t0,200",
+            File(directory, "typing.tsv").readLines()[1],
+        )
     }
 
     @Test
@@ -59,7 +62,7 @@ class RecorderTest {
         book.press('2', atMillis = 0)
         book.accept()
 
-        val queries = Recorder(File(directory, "typing.tsv"), listOf("x", "y"), source = "queries")
+        val queries = Recorder(File(directory, "typing.tsv"), listOf("x", "y"), "queries")
         assertEquals(0, queries.position)
     }
 

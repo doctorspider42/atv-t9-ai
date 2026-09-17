@@ -23,6 +23,7 @@ import java.io.File
  *
  *     source   where the phrase came from, so one file can hold several sittings
  *     at        which phrase of that source it was, counted from zero
+ *     pad      which way up the numeric keypad was being read
  *     target   the phrase that was on screen
  *     keys     what was pressed, in the script alphabet of Session.tokenOf
  *     millis   the gap before each press, comma separated, first one 0
@@ -32,6 +33,12 @@ import java.io.File
  * type a book in one sitting, and a tool that restarts it from the beginning is a tool that
  * collects the first two hundred lines four times.
  *
+ * `pad` is there because the first recording ever made was made through the wrong one: typed
+ * with a remote's geometry while the harness read the keypad literally, which turns every `1`
+ * into a `7` and is invisible in the file afterwards. A digit here is what the decoder would
+ * have seen; the pad is what says where the thumb actually was, and a confusion matrix needs
+ * both.
+ *
  * The timings are kept because at speed the interesting errors are timing errors. A double-fire
  * and a deliberate double letter are the same two presses and differ only in the gap between
  * them, and no amount of text will separate them afterwards.
@@ -40,6 +47,7 @@ class Recorder(
     private val out: File,
     val targets: List<String>,
     private val source: String = "",
+    private val pad: Pad = Pad.NUMPAD,
 ) {
 
     private val keys = StringBuilder()
@@ -94,7 +102,7 @@ class Recorder(
             }
             val gaps = times.mapIndexed { at, time -> if (at == 0) 0 else time - times[at - 1] }
             out.appendText(
-                listOf(source, position, target, keys, gaps.joinToString(","))
+                listOf(source, position, pad.name.lowercase(), target, keys, gaps.joinToString(","))
                     .joinToString("\t") + "\n"
             )
         }
@@ -108,7 +116,7 @@ class Recorder(
 
     companion object {
 
-        const val HEADER = "source\tat\ttarget\tkeys\tmillis"
+        const val HEADER = "source\tat\tpad\ttarget\tkeys\tmillis"
 
         /**
          * Where a sitting picks up: one past the highest phrase already recorded for [source].
