@@ -1,5 +1,6 @@
 package io.github.vagrant326.atvt9.core.harness
 
+import io.github.vagrant326.atvt9.core.Keypad
 import java.io.File
 
 /**
@@ -20,15 +21,26 @@ import java.io.File
  * One row per accepted attempt, tab separated, appended as it happens so a crash costs the
  * attempt in flight and nothing before it:
  *
+ *     source   where the phrase came from, so one file can hold several sittings
+ *     at        which phrase of that source it was, counted from zero
  *     target   the phrase that was on screen
  *     keys     what was pressed, in the script alphabet of Session.tokenOf
  *     millis   the gap before each press, comma separated, first one 0
+ *
+ * The first two columns exist so a long text can be copied out over several evenings: a new
+ * recorder picks up after the highest `at` already written for its source. Nobody is going to
+ * type a book in one sitting, and a tool that restarts it from the beginning is a tool that
+ * collects the first two hundred lines four times.
  *
  * The timings are kept because at speed the interesting errors are timing errors. A double-fire
  * and a deliberate double letter are the same two presses and differ only in the gap between
  * them, and no amount of text will separate them afterwards.
  */
-class Recorder(private val out: File, val targets: List<String>) {
+class Recorder(
+    private val out: File,
+    val targets: List<String>,
+    private val source: String = "",
+) {
 
     private val keys = StringBuilder()
 
@@ -39,8 +51,8 @@ class Recorder(private val out: File, val targets: List<String>) {
      */
     private val times = ArrayList<Long>()
 
-    /** Which phrase is on screen, counted from zero. */
-    var position = 0
+    /** Which phrase is on screen, counted from zero, and where a resumed sitting starts. */
+    var position = resumeFrom(out, source)
         private set
 
     val target: String get() = targets.getOrElse(position) { "" }
@@ -78,10 +90,13 @@ class Recorder(private val out: File, val targets: List<String>) {
         if (keys.isNotEmpty()) {
             if (!out.exists() || out.length() == 0L) {
                 out.parentFile?.mkdirs()
-                out.writeText("target\tkeys\tmillis\n")
+                out.writeText(HEADER + "\n")
             }
             val gaps = times.mapIndexed { at, time -> if (at == 0) 0 else time - times[at - 1] }
-            out.appendText(target + "\t" + keys + "\t" + gaps.joinToString(",") + "\n")
+            out.appendText(
+                listOf(source, position, target, keys, gaps.joinToString(","))
+                    .joinToString("\t") + "\n"
+            )
         }
         skip()
     }
@@ -92,6 +107,55 @@ class Recorder(private val out: File, val targets: List<String>) {
     }
 
     companion object {
+
+        const val HEADER = "source\tat\ttarget\tkeys\tmillis"
+
+        /**
+         * Where a sitting picks up: one past the highest phrase already recorded for [source].
+         *
+         * Highest rather than a count, because a skipped phrase writes no row and a count would
+         * then hand back a position that has already been typed. A phrase skipped in the middle
+         * of a sitting is lost to the record, which is the right trade: it was skipped because it
+         * was not worth recording.
+         */
+        fun resumeFrom(out: File, source: String): Int {
+            if (source.isEmpty() || !out.exists()) {
+                return 0
+            }
+            return out.readLines()
+                .drop(1)
+                .mapNotNull { row ->
+                    val columns = row.split('\t')
+                    columns.getOrNull(1)?.toIntOrNull()?.takeIf { columns[0] == source }
+                }
+                .maxOrNull()
+                ?.plus(1)
+                ?: 0
+        }
+
+        /**
+         * A long text cut into phrases of [words] words each, and reduced to what the keypad can
+         * reach.
+         *
+         * Any text will do and that is the point: the errors being measured are a property of a
+         * thumb and a key grid, not of a vocabulary, so a book supplies in an evening what a
+         * query corpus of twenty-six lines never could. Everything the keypad cannot spell — a
+         * comma, a digit, an apostrophe — becomes a space rather than vanishing, because dropping
+         * it would join the letters either side into a word that was never written and then ask
+         * somebody to type it.
+         *
+         * Cut by word count rather than by sentence, so every phrase is about as long as the last
+         * one. A record made of two-word lines and forty-word lines would measure how tiring a
+         * line is as much as how error-prone the keys are.
+         */
+        fun fragmentsOf(text: String, words: Int): List<String> {
+            val spellable = text.lowercase().map { if (Keypad.digitOf(it) != null) it else ' ' }
+            return spellable.joinToString("")
+                .split(' ')
+                .filter { it.isNotEmpty() }
+                .chunked(words.coerceAtLeast(1))
+                .map { it.joinToString(" ") }
+        }
 
         /**
          * Phrases to type, from the first column of a TSV.

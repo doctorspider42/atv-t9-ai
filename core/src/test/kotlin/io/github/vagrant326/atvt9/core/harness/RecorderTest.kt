@@ -13,7 +13,7 @@ class RecorderTest {
     lateinit var directory: File
 
     private fun recorder(vararg targets: String) =
-        Recorder(File(directory, "typing.tsv"), targets.toList())
+        Recorder(File(directory, "typing.tsv"), targets.toList(), source = "book")
 
     @Test
     fun `an attempt is written with its phrase and its timings`() {
@@ -24,7 +24,7 @@ class RecorderTest {
         recorder.accept()
 
         assertEquals(
-            listOf("target\tkeys\tmillis", "kot\t568\t0,120,70"),
+            listOf(Recorder.HEADER, "book\t0\tkot\t568\t0,120,70"),
             File(directory, "typing.tsv").readLines(),
         )
     }
@@ -38,7 +38,42 @@ class RecorderTest {
         recorder.press('6', atMillis = 200)
         recorder.accept()
 
-        assertEquals("kot\t56\t0,200", File(directory, "typing.tsv").readLines()[1])
+        assertEquals("book\t0\tkot\t56\t0,200", File(directory, "typing.tsv").readLines()[1])
+    }
+
+    @Test
+    fun `a sitting picks up where the last one stopped`() {
+        val first = recorder("a", "b", "c")
+        first.skip()
+        first.press('2', atMillis = 0)
+        first.accept()
+
+        val second = recorder("a", "b", "c")
+        assertEquals(2, second.position)
+        assertEquals("c", second.target)
+    }
+
+    @Test
+    fun `another text in the same file is its own sitting`() {
+        val book = recorder("a", "b")
+        book.press('2', atMillis = 0)
+        book.accept()
+
+        val queries = Recorder(File(directory, "typing.tsv"), listOf("x", "y"), source = "queries")
+        assertEquals(0, queries.position)
+    }
+
+    @Test
+    fun `a text becomes phrases of a fixed length, with the untypable turned into gaps`() {
+        val fragments = Recorder.fragmentsOf(
+            "Litwo! Ojczyzno moja! ty jesteś jak zdrowie;\nIle cię trzeba cenić",
+            words = 4,
+        )
+
+        assertEquals(
+            listOf("litwo ojczyzno moja ty", "jesteś jak zdrowie ile", "cię trzeba cenić"),
+            fragments,
+        )
     }
 
     @Test

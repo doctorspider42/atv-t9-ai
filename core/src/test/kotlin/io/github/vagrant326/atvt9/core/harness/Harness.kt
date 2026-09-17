@@ -37,6 +37,7 @@ import javax.swing.WindowConstants
  *     ./gradlew :core:harness --args="--layout remote --language pl"
  *     ./gradlew :core:harness --args="--keys 2255 0 63736"
  *     ./gradlew :core:harness --args="--targets bench/queries-v1.tsv --record bench/typing.tsv"
+ *     ./gradlew :core:harness --args="--text pan-tadeusz.txt --chunk 4"
  *
  * `--keys` runs a script and prints the result, which needs no display and belongs in CI.
  * Without it a window opens. The token alphabet is [Session.tokenOf], and `--layout` is [Pad].
@@ -81,14 +82,22 @@ fun main(arguments: Array<String>) {
         ?.let { name -> Pad.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
         ?: Pad.NUMPAD
 
-    val targets = File(options["--targets"] ?: "bench/queries-v1.tsv")
-        .takeIf { it.exists() }
-        ?.let(Recorder::targetsFrom)
-        .orEmpty()
+    // Two sources of phrases to type, and a book is the more useful of them. What is being
+    // measured is a thumb against a key grid rather than a vocabulary, so an evening of copying
+    // out any Polish text supplies what a query corpus of twenty-six lines never could.
+    val text = options["--text"]?.let(::File)?.takeIf { it.exists() }
+    val targets = when {
+        text != null -> Recorder.fragmentsOf(text.readText(), options["--chunk"]?.toIntOrNull() ?: 4)
+        else -> File(options["--targets"] ?: "bench/queries-v1.tsv")
+            .takeIf { it.exists() }
+            ?.let(Recorder::targetsFrom)
+            .orEmpty()
+    }
+    val source = text?.nameWithoutExtension ?: "queries"
     val recording = File(options["--record"] ?: "bench/typing.tsv")
 
     SwingUtilities.invokeLater {
-        Window(dictionaries, language, pad, targets, recording).isVisible = true
+        Window(dictionaries, language, pad, targets, source, recording).isVisible = true
     }
 }
 
@@ -139,6 +148,7 @@ private class Window(
     private var language: String,
     private var pad: Pad,
     private val targets: List<String>,
+    private val source: String,
     private val recording: File,
 ) : JFrame("atv-t9 harness") {
 
@@ -237,10 +247,10 @@ private class Window(
                 null
             }
 
-            else -> {
-                log.append("-- recording ${targets.size} phrases into ${recording.path}\n")
+            else -> Recorder(recording, targets, source).also {
+                val resumed = if (it.position > 0) ", resuming at ${it.position + 1}" else ""
+                log.append("-- $source: ${targets.size} phrases into ${recording.path}$resumed\n")
                 log.append("-- type each one at full speed and press Enter; do not fix mistakes\n")
-                Recorder(recording, targets)
             }
         }
     }
