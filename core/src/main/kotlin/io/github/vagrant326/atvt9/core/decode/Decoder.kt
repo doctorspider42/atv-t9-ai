@@ -3,10 +3,11 @@ package io.github.vagrant326.atvt9.core.decode
 import io.github.vagrant326.atvt9.core.Dictionary
 
 /**
- * The contract the decoder will be built to. Nothing implements it yet, and that is the point.
+ * The contract the decoder is built to, written before there was a decoder.
  *
- * Every decision this file pins down is one that is free to make now and expensive to retrofit,
- * because each of them is a shape rather than a value:
+ * Every decision here was free to make then and expensive to retrofit, because each of them is a
+ * shape rather than a value — and [BeamDecoder] was written against all six without argument,
+ * which is the only evidence that writing them down first was worth anything:
  *
  *  1. **A whole query goes in, not a word.** A decoder that cannot revise the second word when
  *     the eleventh key arrives cannot fix the thing this project exists to fix. Committing a word
@@ -76,8 +77,15 @@ data class Weights(
     /** How likely the words are in that order. Carried but unused until the n-grams exist. */
     val languageModel: Double = 1.0,
 
-    /** How common the word is on its own, which is all a unigram decoder has. */
-    val frequency: Double = 1.0,
+    /**
+     * How common the word is on its own, which is all a unigram decoder has.
+     *
+     * Below one because the byte the dictionary stores is a crude proxy for a probability and the
+     * distribution it implies is too peaked against an error model measured to two decimal places.
+     * Fitted at 0.5 on the recorded attempts; at 1.0 the whole thing loses ten points of word
+     * accuracy, and what it loses them to is preferring one long rare word over two ordinary ones.
+     */
+    val frequency: Double = 0.5,
 
     /**
      * How dearly to hold a word boundary where no `0` was pressed.
@@ -85,8 +93,13 @@ data class Weights(
      * Separate from [input] although it is measured the same way, because it is the one error the
      * user makes on purpose: skipping the space is the point of the exercise, and how forgiving
      * to be about it is a decision rather than an observation.
+     *
+     * Fitted at 2, meaning twice as unwilling to split as the measurement alone would be — but
+     * the measurement it is fitted against is of somebody copying out text who pressed the space
+     * 96.7% of the time. For the workload this is all for, where the space is skipped on purpose,
+     * this number is fitted on the wrong evidence and will have to be fitted again on the right.
      */
-    val space: Double = 1.0,
+    val space: Double = 2.0,
 
     /** How much a word's language being the expected one is worth. */
     val languagePrior: Double = 1.0,

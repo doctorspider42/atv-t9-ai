@@ -3,6 +3,7 @@ package io.github.vagrant326.atvt9.core.bench
 import io.github.vagrant326.atvt9.core.Dictionary
 import io.github.vagrant326.atvt9.core.decode.BeamDecoder
 import io.github.vagrant326.atvt9.core.decode.Source
+import io.github.vagrant326.atvt9.core.decode.Weights
 import java.io.File
 import kotlin.system.measureTimeMillis
 
@@ -61,6 +62,39 @@ fun main(arguments: Array<String>) {
             )
         },
     )
+
+    // The weights are the only part of the decoder that was chosen rather than counted, so they
+    // are fitted here against the same real presses everything else is measured on. A grid rather
+    // than anything cleverer: there are two of them that matter, the surface is flat enough to see
+    // by eye, and a number arrived at by a method nobody can follow is a number nobody will trust.
+    if ("--tune" in options) {
+        val sources = configurations.first().second
+        println("weights, fitted on these attempts")
+        println("%-10s %-8s %10s %10s".format("frequency", "space", "phrases", "words"))
+        for (frequency in listOf(0.2, 0.35, 0.5, 0.7, 1.0)) {
+            for (space in listOf(0.5, 1.0, 2.0, 3.0)) {
+                val weights = Weights(frequency = frequency, space = space)
+                val decoder = BeamDecoder(sources, weights = weights, width = 32)
+                var phrases = 0
+                var right = 0
+                var total = 0
+                for (attempt in rows) {
+                    val reading = decoder.decode(attempt.keys, limit = 1).firstOrNull()?.text
+                    if (reading == attempt.target) phrases++
+                    val wanted = attempt.target.split(' ')
+                    val got = reading?.split(' ').orEmpty()
+                    total += wanted.size
+                    right += wanted.indices.count { got.getOrNull(it) == wanted[it] }
+                }
+                println(
+                    "%-10.2f %-8.1f %9.1f%% %9.1f%%".format(
+                        frequency, space, 100.0 * phrases / rows.size, 100.0 * right / total
+                    )
+                )
+            }
+        }
+        return
+    }
 
     for ((name, sources) in configurations) {
         val decoder = BeamDecoder(sources, width = options["--width"]?.toIntOrNull() ?: 64)
