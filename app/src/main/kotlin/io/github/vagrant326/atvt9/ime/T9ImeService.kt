@@ -2,15 +2,21 @@ package io.github.vagrant326.atvt9.ime
 
 import android.inputmethodservice.InputMethodService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
+import io.github.vagrant326.atvt9.core.Candidate
 import io.github.vagrant326.atvt9.core.Composer
 import io.github.vagrant326.atvt9.core.Keypad
 import io.github.vagrant326.atvt9.core.LetterCase
 import io.github.vagrant326.atvt9.core.T9Engine
+import io.github.vagrant326.atvt9.core.decode.BeamDecoder
+import io.github.vagrant326.atvt9.core.decode.SentenceComposer
+import io.github.vagrant326.atvt9.core.decode.Source
 import io.github.vagrant326.atvt9.model.DictionaryRepository
 import io.github.vagrant326.atvt9.model.Language
 import io.github.vagrant326.atvt9.model.UserWords
@@ -45,6 +51,27 @@ class T9ImeService : InputMethodService() {
     private var mayLearn = true
 
     private var punctuationAt = -1
+
+    /**
+     * The whole query as presses, when the field is being read as a sentence rather than a word at
+     * a time. Null when the setting is off, which is also what every path below tests.
+     */
+    private var composer: SentenceComposer? = null
+
+    /**
+     * Decoding waits for the typing to stop.
+     *
+     * At the speed this keyboard is meant to be typed at, a decode per press is work thrown away
+     * four times in five — and nobody reads the strip mid-word at that speed, which is what makes
+     * a beam this wide affordable on a television at all. A hundred and fifty milliseconds is
+     * below the pause between two words and above the gap between two presses.
+     */
+    private val clock = Handler(Looper.getMainLooper())
+    private val settling = Runnable {
+        composer?.settle()
+        setComposing()
+        render()
+    }
 
     /**
      * Applied where the word reaches the field, never where it reaches the dictionary. Word-scoped
@@ -95,6 +122,7 @@ class T9ImeService : InputMethodService() {
         engine.reset()
         engine.dictionary = dictionaries.dictionaryFor(preferences.activeLanguage)
         mayLearn = preferences.isLearning && isLearnable(info)
+        composer = composerFor()
         showLanguages = false
         deferredKey = KeyEvent.KEYCODE_UNKNOWN
 
@@ -189,6 +217,12 @@ class T9ImeService : InputMethodService() {
         // follows a mark comes out of the letter run and not the symbol run.
         if (symbols && !continuesMark(action)) {
             leaveSymbols()
+        }
+
+        if (composeSentence(action)) {
+            setComposing()
+            render()
+            return true
         }
 
         when (action) {
@@ -420,10 +454,115 @@ class T9ImeService : InputMethodService() {
         engine.dictionary = dictionaries.dictionaryFor(next)
     }
 
+    /**
+     * The decoder, over both dictionaries at once, or null when the setting is off.
+     *
+     * Both languages are always in it and the prior leans towards the active one. A switch cannot
+     * help with `piątek the series`, which changes language in the middle, and a TV search box is
+     * full of exactly that — so the language is decided per word by the evidence rather than by
+     * the user pressing something before they start typing.
+     */
+    private fun composerFor(): SentenceComposer? {
+        if (!preferences.isSentence) {
+            return null
+        }
+        val sources = preferences.enabledLanguages.mapNotNull { language ->
+            dictionaries.dictionaryFor(language)?.let {
+                Source(
+                    language = language.code,
+                    dictionary = it,
+                    prior = if (language == preferences.activeLanguage) 0.8 else 0.2,
+                )
+            }
+        }
+        return if (sources.isEmpty()) null else SentenceComposer(BeamDecoder(sources))
+    }
+
+    /**
+     * The presses, while a whole query is in the air. Returns whether the action was spent here.
+     *
+     * The digit mode and the mark layer are left to the word keyboard below: neither is ambiguous,
+     * so neither has anything for a decoder to decide, and a `7` in a phone number must not become
+     * a word. Case and spelling are the same — a capital belongs to a word and there is no word
+     * yet, so those fall through and end the sentence first.
+     */
+    private fun composeSentence(action: Action): Boolean {
+        val composer = composer?.takeIf { !symbols && !digits } ?: return false
+
+        when (action) {
+            is Action.Digit -> composer.press(action.digit)
+
+            // The space is a press like any other now. Skipping it is the thing this whole
+            // mechanism exists to forgive, so it cannot also be the thing that commits.
+            is Action.Space -> composer.press('0')
+
+            is Action.Delete -> if (!composer.delete()) {
+                currentInputConnection?.deleteSurroundingText(1, 0)
+                return true
+            }
+
+            is Action.Candidate -> {
+                composer.next(forward = action.forward)
+                return true
+            }
+
+            is Action.Back -> {
+                composer.clear()
+                currentInputConnection?.finishComposingText()
+                return true
+            }
+
+            is Action.Commit -> {
+                if (!composer.isComposing) {
+                    return false // nothing pending: the press belongs to the field, as before
+                }
+                sendSentence(composer)
+                return true
+            }
+
+            // Anything else ends the sentence and lets the word keyboard have the press: spelling
+            // a word the dictionaries lack is exactly the escape this needs to leave open.
+            else -> {
+                sendSentence(composer)
+                return false
+            }
+        }
+
+        clock.removeCallbacks(settling)
+        clock.postDelayed(settling, SETTLE_MILLIS)
+        return true
+    }
+
+    /** Puts the reading into the field, and remembers its words so the next time is cheaper. */
+    private fun sendSentence(composer: SentenceComposer) {
+        clock.removeCallbacks(settling)
+        val words = composer.words.map { it.text }
+        val reading = composer.commit()
+        val connection = currentInputConnection
+        if (reading.isEmpty()) {
+            connection?.finishComposingText()
+            return
+        }
+        connection?.commitText(letterCase.apply(reading), 1)
+        letterCase = letterCase.afterWord()
+        if (mayLearn) {
+            words.forEach { userWords.dictionary.learn(it) }
+            userWords.flush()
+        }
+    }
+
     /** Shows the pending word inline, so the field always reads as what committing would leave. */
     private fun setComposing() {
         punctuationAt = -1
         val connection = currentInputConnection ?: return
+        composer?.let {
+            if (it.isComposing) {
+                connection.setComposingText(letterCase.apply(it.text), 1)
+            } else {
+                connection.finishComposingText()
+            }
+            return
+        }
         if (engine.isComposing) {
             connection.setComposingText(letterCase.apply(engine.composing), 1)
         } else {
@@ -460,12 +599,18 @@ class T9ImeService : InputMethodService() {
         if (!::strip.isInitialized) {
             return
         }
+        val reading = composer?.takeIf { it.isComposing }
         strip.render(
             StripState(
-                candidates = engine.candidates,
-                selected = engine.selected,
-                sequence = engine.sequence,
-                composing = engine.composing,
+                // The strip shows whole readings rather than words when a whole query is in the
+                // air, which is what there is to choose between. Dressed as candidates so the view
+                // stays one view: what it draws is a list with one of them picked out, and that is
+                // true of both.
+                candidates = reading?.hypotheses?.map { Candidate(it.text, 0, exact = true) }
+                    ?: engine.candidates,
+                selected = reading?.selected ?: engine.selected,
+                sequence = reading?.pressed ?: engine.sequence,
+                composing = reading?.text ?: engine.composing,
                 spelling = engine.mode == Composer.SPELL,
                 trained = engine.dictionary != null,
                 language = languageLabel(),
@@ -523,6 +668,9 @@ class T9ImeService : InputMethodService() {
     }
 
     private companion object {
+
+        /** Below the pause between two words, above the gap between two presses. */
+        const val SETTLE_MILLIS = 150L
         /** What a TV query actually contains. Not a general punctuation set, and not meant as one. */
         const val PUNCTUATION = ".,-'&:/"
 

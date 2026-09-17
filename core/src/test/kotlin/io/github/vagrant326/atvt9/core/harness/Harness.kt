@@ -4,6 +4,9 @@ import io.github.vagrant326.atvt9.core.Composer
 import io.github.vagrant326.atvt9.core.Dictionary
 import io.github.vagrant326.atvt9.core.Keypad
 import io.github.vagrant326.atvt9.core.UserDictionary
+import io.github.vagrant326.atvt9.core.decode.BeamDecoder
+import io.github.vagrant326.atvt9.core.decode.SentenceComposer
+import io.github.vagrant326.atvt9.core.decode.Source
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -25,6 +28,7 @@ import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import javax.swing.WindowConstants
 import javax.swing.filechooser.FileNameExtensionFilter
 
@@ -192,6 +196,15 @@ class Settings(private val file: File) {
         get() = properties.getProperty("chunk", "4").toIntOrNull() ?: 4
         set(value) = set("chunk", value.toString())
 
+    /** Whether the whole query is decoded as a sentence, or each word looked up as it is typed. */
+    var sentence: Boolean
+        get() = properties.getProperty("sentence", "true").toBoolean()
+        set(value) = set("sentence", value.toString())
+
+    var beam: Int
+        get() = properties.getProperty("beam", "64").toIntOrNull() ?: 64
+        set(value) = set("beam", value.toString())
+
     fun dictionary(language: String): String = properties.getProperty(
         "dictionary-$language",
         "app/src/main/assets/dictionary-$language.bin",
@@ -236,6 +249,24 @@ private class Window(
     private var language = settings.language
     private var session = Session(dictionaries[language], clock = System::currentTimeMillis)
 
+    /**
+     * The whole query as presses, read as a sentence, with nothing committed until it is sent.
+     *
+     * Rebuilt whenever the language changes, because the decoder holds its sources: both
+     * dictionaries are always in it, with the prior favouring the one that is selected. One
+     * language plus a switch cannot type `piątek the series`, and that phrase is the workload.
+     */
+    private var decoding = newComposer()
+
+    /**
+     * Decoding waits for the typing to stop. At five presses a second a decode per press is work
+     * thrown away four times in five, and nobody reads the strip mid-word at that speed anyway —
+     * which is the same reason the television can afford a beam this wide.
+     */
+    private val settling = Timer(150) { decoding.settle(); refresh() }.apply {
+        isRepeats = false
+    }
+
     /** How much of `session.submitted` has reached the log already. */
     private var logged = 0
 
@@ -244,6 +275,9 @@ private class Window(
 
     /** Set while waiting for the key that a bind is being pointed at. */
     private var capturing: Bind? = null
+
+    /** Queries sent while reading whole sentences, which the composition itself does not keep. */
+    private val submitted = mutableListOf<String>()
 
     private var showing = TYPING
 
@@ -270,6 +304,8 @@ private class Window(
     private val recordToButton = button("") { chooseRecord() }
     private val dictionaryButton = button("") { chooseDictionary() }
     private val recordButton = button("Record") { toggleRecording() }
+    private val modeButton = button("") { switchMode() }
+    private val beamButton = button("") { switchBeam() }
     private val phrasesLabel = label(13f, DIM)
 
     init {
@@ -327,9 +363,44 @@ private class Window(
             refresh()
             return true
         }
+        if (settings.sentence) {
+            compose(action)
+            if (decoding.stale) {
+                settling.restart()
+            }
+            refresh()
+            return true
+        }
         session.press(action)
         refresh()
         return true
+    }
+
+    /**
+     * The harness's keys, as the composition understands them.
+     *
+     * A short translation rather than a shared vocabulary: what the remote calls `0` is a press
+     * like any other here, and what it calls OK is the only thing that commits. Everything the
+     * word-at-a-time keyboard needs and this does not — case, spelling, marks — simply has no
+     * meaning while a whole query is in the air, and is quietly ignored rather than half-honoured.
+     */
+    private fun compose(action: Action) {
+        when (action) {
+            is Action.Digit -> decoding.press(action.digit)
+            Action.Space -> decoding.press('0')
+            Action.Delete -> decoding.delete()
+            Action.Next -> decoding.next(forward = true)
+            Action.Previous -> decoding.next(forward = false)
+            Action.DeleteWord, Action.Abandon -> decoding.clear()
+            Action.Commit -> {
+                val sent = decoding.commit()
+                if (sent.isNotEmpty()) {
+                    submitted.add(sent)
+                }
+            }
+
+            else -> Unit
+        }
     }
 
     /**
@@ -387,6 +458,7 @@ private class Window(
             line(
                 button("Type") { show(TYPING) },
                 button("Settings") { show(SETTINGS) },
+                modeButton,
                 button("Open a text…") { chooseText() },
                 recordButton,
                 button("Take back a phrase") { takeBack() },
@@ -451,6 +523,10 @@ private class Window(
         panel.add(row("start cold again", button("Clear what was learnt") { reset(forget = true) }))
         panel.add(row("", button("Clear the field") { reset(forget = false) }))
 
+        panel.add(heading("Reading"))
+        panel.add(row("how the presses are read", modeButton))
+        panel.add(row("beam width", beamButton))
+
         panel.add(heading("Recording"))
         panel.add(row("text to copy out", textButton))
         panel.add(row("or a list of queries", targetsButton))
@@ -487,6 +563,27 @@ private class Window(
         settings.bindings.apply(settings.pad)
         settings.save()
         refresh()
+    }
+
+    private fun switchMode() {
+        settings.sentence = !settings.sentence
+        decoding = newComposer()
+        session = Session(dictionaries[language], session.user, clock = System::currentTimeMillis)
+        refresh()
+    }
+
+    private fun switchBeam() {
+        settings.beam = BEAMS[(BEAMS.indexOf(settings.beam) + 1) % BEAMS.size]
+        decoding = newComposer()
+        refresh()
+    }
+
+    /** Both dictionaries, with the prior leaning towards the one selected. See [Source]. */
+    private fun newComposer(): SentenceComposer {
+        val sources = LANGUAGES.mapNotNull { name ->
+            dictionaries[name]?.let { Source(name, it, prior = if (name == language) 0.8 else 0.2) }
+        }
+        return SentenceComposer(BeamDecoder(sources, width = settings.beam))
     }
 
     private fun switchChunk() {
@@ -659,7 +756,63 @@ private class Window(
             ?.let { "recording ${it.position + 1} of ${it.targets.size}  ·  $source" }
             ?: "$source  ·  ${targets.size} phrases"
 
-        recorder?.let { renderRecording(it) } ?: renderTyping()
+        modeButton.text = if (settings.sentence) "whole sentence" else "word at a time"
+        beamButton.text = settings.beam.toString()
+
+        when {
+            recorder != null -> renderRecording(recorder!!)
+            settings.sentence -> renderSentence()
+            else -> renderTyping()
+        }
+    }
+
+    /**
+     * The decoder's view: the presses so far, and the sentences they might be.
+     *
+     * No inline composing word and no candidate strip per key, because there is no word in
+     * progress — every press may still change any word before it, and showing one as settled
+     * would be a lie the next press exposes. What is shown instead is the best reading, the
+     * others under it, and an honest mark while the reading is older than the presses.
+     */
+    private fun renderSentence() {
+        val waiting = decoding.stale && decoding.isComposing
+        fieldLabel.text = html(
+            span(escape(decoding.text), FOREGROUND) +
+                span(if (waiting) "&nbsp;…" else "&nbsp;|", DIM)
+        )
+
+        stripLabel.text = html(
+            when {
+                !decoding.isComposing -> span("(nothing pending)", DIM)
+                decoding.hypotheses.isEmpty() && !waiting ->
+                    span("nothing reads those presses — spell it out", WARN)
+                else -> decoding.hypotheses.mapIndexed { index, reading ->
+                    val text = escape(reading.text)
+                    if (index == decoding.selected) {
+                        span("[$text]", ACCENT)
+                    } else {
+                        span("&nbsp;$text&nbsp;", DIM)
+                    }
+                }.joinToString("")
+            }
+        )
+
+        statusLabel.text = html(
+            span(
+                listOf(
+                    "lang $language",
+                    "keys ${decoding.pressed.ifEmpty { "—" }}",
+                    "readings ${decoding.hypotheses.size}",
+                    "beam ${settings.beam}",
+                ).joinToString("   ·   "),
+                DIM,
+            )
+        )
+
+        while (logged < submitted.size) {
+            log.append("> " + submitted[logged++])
+            log.append(System.lineSeparator())
+        }
     }
 
     private fun renderTyping() {
@@ -791,6 +944,9 @@ private class Window(
 
         const val TYPING = "typing"
         const val SETTINGS = "settings"
+
+        /** Beam widths worth trying by hand, from a television's budget to a generous one. */
+        val BEAMS = listOf(8, 16, 32, 64, 128)
 
         val BACKGROUND: Color = Color(0x12, 0x14, 0x18)
         val CONTROL: Color = Color(0x1E, 0x23, 0x2B)

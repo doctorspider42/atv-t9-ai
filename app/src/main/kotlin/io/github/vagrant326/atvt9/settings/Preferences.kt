@@ -163,6 +163,18 @@ class Preferences(context: Context) {
      * `T9ImeService` apply regardless of this setting — a password is never learnt whatever this
      * says.
      */
+    /**
+     * Whether a whole query is read at once, or each word as it is typed.
+     *
+     * On, because it is the reason this build exists: it forgives a missed space and a press that
+     * landed next door, which is what typing fast on a remote produces. Off is the keyboard as it
+     * shipped, kept reachable because the decoder answers with nothing when nothing reads, and a
+     * user who has hit that wants the old behaviour rather than an argument about it.
+     */
+    var isSentence: Boolean
+        get() = store.getBoolean(KEY_SENTENCE, true)
+        set(value) = store.edit().putBoolean(KEY_SENTENCE, value).apply()
+
     var isLearning: Boolean
         get() = store.getBoolean(KEY_LEARNING, true)
         set(value) = store.edit().putBoolean(KEY_LEARNING, value).apply()
@@ -196,6 +208,7 @@ class Preferences(context: Context) {
 
     private companion object {
         const val NAME = "t9"
+        const val KEY_SENTENCE = "sentence"
         const val KEY_ENABLED_LANGUAGES = "enabled_languages"
         const val KEY_ACTIVE_LANGUAGE = "active_language"
         const val KEY_TRIGGER_KEYCODE = "trigger_keycode"
