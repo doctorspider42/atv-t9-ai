@@ -6,6 +6,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
@@ -62,6 +64,20 @@ class T9ImeService : InputMethodService() {
     private var composer: SentenceComposer? = null
 
     /**
+     * The decoder, and the one thread allowed to touch it.
+     *
+     * Reading a query is hundreds of milliseconds on a television and it was happening on the
+     * thread that draws the keyboard, so every press during a read waited for it — which is most
+     * of what "slow" meant. It happens here instead, and the answer is posted back.
+     *
+     * One thread rather than a pool, because the decoder keeps the search it built for the last
+     * query and extends it for the next: two threads in there would each undo the other's work
+     * and would do it unsafely. One thumb, one thread.
+     */
+    private var decoder: BeamDecoder? = null
+    private val decoding = Executors.newSingleThreadExecutor()
+
+    /**
      * Decoding waits for the typing to stop.
      *
      * At the speed this keyboard is meant to be typed at, a decode per press is work thrown away
@@ -70,20 +86,36 @@ class T9ImeService : InputMethodService() {
      * below the pause between two words and above the gap between two presses.
      */
     private val clock = Handler(Looper.getMainLooper())
+
+    /**
+     * Reads the presses somewhere else and brings the answer back.
+     *
+     * The keys are taken here, on the main thread, so that what comes back can be checked against
+     * what is now in hand: a reading for presses that have since changed is an answer to a
+     * question nobody is asking, and putting it on screen would show a word the last press had
+     * already ruled out.
+     */
     private val settling = Runnable {
         val composer = composer ?: return@Runnable
-        // Timed on the device rather than reasoned about. A decoder fast on a laptop says nothing
-        // about a television: the beam allocates heavily and ART collects differently, and the
-        // only honest number is the one measured where it will run.
-        val started = SystemClock.uptimeMillis()
-        val keys = composer.pressed.length
-        composer.settle()
-        val took = SystemClock.uptimeMillis() - started
-        if (BuildConfig.DEBUG) {
-            Log.i(TAG, "decoded $keys keys in ${took}ms, ${composer.hypotheses.size} readings")
+        val decoder = decoder ?: return@Runnable
+        val keys = composer.pending() ?: return@Runnable
+        decoding.execute {
+            // Timed on the device rather than reasoned about. A decoder fast on a laptop says
+            // nothing about a television: the beam allocates heavily, ART collects differently,
+            // and the only honest number is the one measured where it will run.
+            val started = SystemClock.uptimeMillis()
+            val readings = decoder.decode(keys, READINGS)
+            val took = SystemClock.uptimeMillis() - started
+            clock.post {
+                if (composer.apply(keys, readings)) {
+                    if (BuildConfig.DEBUG) {
+                        Log.i(TAG, "read ${keys.length} keys in ${took}ms off the main thread")
+                    }
+                    setComposing()
+                    render()
+                }
+            }
         }
-        setComposing()
-        render()
     }
 
     /**
@@ -123,6 +155,20 @@ class T9ImeService : InputMethodService() {
         dictionaries = DictionaryRepository(this)
         userWords = UserWords.of(this)
         engine = T9Engine(null, userWords.dictionary)
+    }
+
+    /**
+     * The decoder's thread goes with the keyboard.
+     *
+     * An executor outlives the service that made it unless it is told not to, and a keyboard is
+     * created and destroyed whenever the system feels like reclaiming it — so left alone this
+     * would leak a thread per lifetime, in a process that has to stay small enough to be worth
+     * keeping alive between fields.
+     */
+    override fun onDestroy() {
+        decoding.shutdownNow()
+        clock.removeCallbacks(settling)
+        super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
@@ -525,7 +571,13 @@ class T9ImeService : InputMethodService() {
                 )
             }
         }
-        return if (sources.isEmpty()) null else SentenceComposer(BeamDecoder(sources))
+        if (sources.isEmpty()) {
+            decoder = null
+            return null
+        }
+        val built = BeamDecoder(sources)
+        decoder = built
+        return SentenceComposer(built, READINGS)
     }
 
     /**
@@ -620,6 +672,13 @@ class T9ImeService : InputMethodService() {
     /** Puts the reading into the field, and remembers its words so the next time is cheaper. */
     private fun sendSentence(composer: SentenceComposer) {
         clock.removeCallbacks(settling)
+        // The reading is about to reach the field, so it has to be the reading of every press —
+        // including any made since the last one was worked out. Settling on the decoder's own
+        // thread and waiting keeps one thread in the decoder; the wait is bounded by one read and
+        // is paid at the moment the user asked for the text rather than while they are typing.
+        if (composer.pending() != null) {
+            runCatching { decoding.submit { composer.settle() }.get(SETTLE_LIMIT, TimeUnit.SECONDS) }
+        }
         val words = composer.words.map { it.text }
         val reading = composer.commit()
         val connection = currentInputConnection
@@ -764,6 +823,12 @@ class T9ImeService : InputMethodService() {
          * is the speed that made it feel slow.
          */
         const val SETTLE_MILLIS = 300L
+
+        /** How long a commit may wait for a reading before going ahead without one. */
+        const val SETTLE_LIMIT = 2L
+
+        /** Readings kept, which is what the strip can walk. */
+        const val READINGS = 5
         /** What a TV query actually contains. Not a general punctuation set, and not meant as one. */
         const val PUNCTUATION = ".,-'&:/"
 

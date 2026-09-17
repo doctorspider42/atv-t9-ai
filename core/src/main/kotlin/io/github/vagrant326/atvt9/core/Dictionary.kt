@@ -58,6 +58,26 @@ class Dictionary private constructor(
 ) {
 
     /**
+     * Every key sequence the dictionary holds, packed into a long apiece and in order.
+     *
+     * The decoder asks "can this prefix still become a word" more than it asks anything else: a
+     * beam of thirty-two states tries some forty continuations per press, and on a television
+     * each of those was a binary search through a front-coded file, decoding words into freshly
+     * allocated strings to compare them. That is the single most expensive thing this keyboard
+     * does, and none of the work it does is needed to answer the question.
+     *
+     * So the sequences are lifted out once, at load, as integers. Three bits per key, most
+     * significant first, left-aligned: `568` and `5680...` therefore sit next to each other and
+     * every sequence starting with `568` occupies one contiguous range, which makes the question
+     * two comparisons and a binary search over a `LongArray` with nothing allocated at all.
+     *
+     * Built rather than stored, and cheaply: a key is derivable from the alphabet index without
+     * ever making a string, and front coding means the digits of the shared prefix are the
+     * previous word's digits — so one pass over the entries with a scratch buffer does it.
+     */
+    private val sequences: LongArray = packSequences()
+
+    /**
      * Words for [digits], best first: everything the sequence spells, then what it completes to.
      *
      * Completions are capped by [COMPLETION_SCAN] rather than by correctness. A two-key prefix
@@ -121,18 +141,106 @@ class Dictionary private constructor(
     /**
      * Whether any word starts with [digits], which is how a search knows a branch is dead.
      *
-     * The decoder asks this far more often than it asks anything else: a beam that cannot tell a
-     * live prefix from a dead one spends its width on sequences no word will ever complete, and
-     * the width is the whole budget. One binary search over the checkpoints answers it, because
-     * the file is ordered by sequence and a prefix's words are therefore contiguous — the same
-     * property that makes completion cheap makes this cheap.
+     * A beam that cannot tell a live prefix from a dead one spends its width on sequences no word
+     * will ever complete, and the width is the whole budget — so this is asked more often than
+     * anything else here and has to cost almost nothing. See [sequences]: a binary search over
+     * integers, allocating nothing.
+     *
+     * A prefix longer than [PACKED] keys is answered on its first [PACKED], which can only say
+     * yes where the truth is no — and a yes only keeps a beam state alive, where closing a word
+     * still asks the dictionary itself. So the cost of being wrong that far out is one state.
      */
     fun hasPrefix(digits: String): Boolean {
         if (digits.isEmpty()) {
             return true
         }
-        val cursor = seek(digits) ?: return false
-        return cursor.advance() && cursor.sequence().startsWith(digits)
+        val length = minOf(digits.length, PACKED)
+        val low = pack(digits, length)
+        if (low < 0) {
+            return false // not a key sequence at all
+        }
+        val span = 1L shl (BITS * (PACKED - length))
+        val found = sequences.binarySearch(low)
+        val at = if (found < 0) -found - 1 else found
+        return at < sequences.size && sequences[at] < low + span
+    }
+
+    /**
+     * The key sequence as a number: three bits a key, most significant first, left-aligned.
+     *
+     * Left-aligned is what turns a prefix into a range rather than a scan. Keys are `2`-`9` and
+     * are stored as 1-8, so the zero padding below them sorts before every real key and every
+     * sequence starting with a given prefix lands in `[pack(prefix), pack(prefix) + span)`.
+     */
+    private fun pack(digits: CharSequence, length: Int): Long {
+        var packed = 0L
+        for (at in 0 until length) {
+            val key = digits[at]
+            if (key < Keypad.FIRST_DIGIT || key > Keypad.LAST_DIGIT) {
+                return -1
+            }
+            packed = packed or
+                ((key - Keypad.FIRST_DIGIT + 1).toLong() shl (BITS * (PACKED - 1 - at)))
+        }
+        return packed
+    }
+
+    /**
+     * One pass over the entries, building [sequences] without decoding a single word.
+     *
+     * An entry holds alphabet indices, and the key a letter sits on is a property of the letter,
+     * so a table from index to key answers it with no string anywhere. Front coding means the
+     * first `shared` keys are the previous word's, which a scratch buffer carries forward — so the
+     * whole dictionary costs one sweep and nothing is allocated per word.
+     */
+    private fun packSequences(): LongArray {
+        val keyOf = ByteArray(alphabet.size + 1)
+        for (index in alphabet.indices) {
+            keyOf[index + 1] = (Keypad.digitOf(alphabet[index]) ?: ' ').code.toByte()
+        }
+
+        val packed = LongArray(wordCount)
+        val keys = ByteArray(PACKED)
+        var count = 0
+        var at = entriesAt
+
+        while (at < bytes.size) {
+            val head = bytes[at].toInt() and 0xFF
+            val shared: Int
+            val suffixLength: Int
+            if (head == ESCAPE) {
+                shared = bytes[at + 1].toInt() and 0xFF
+                suffixLength = bytes[at + 2].toInt() and 0xFF
+                at += 3
+            } else {
+                shared = head ushr 4
+                suffixLength = head and 0x0F
+                at += 1
+            }
+
+            var length = minOf(shared, PACKED)
+            for (step in 0 until suffixLength) {
+                if (length < PACKED) {
+                    keys[length++] = keyOf[bytes[at + step].toInt() and 0xFF]
+                }
+            }
+            at += suffixLength + 1 // the suffix, then the score byte
+
+            var code = 0L
+            for (step in 0 until length) {
+                val key = keys[step].toInt().toChar()
+                if (key < Keypad.FIRST_DIGIT || key > Keypad.LAST_DIGIT) {
+                    code = -1
+                    break
+                }
+                code = code or
+                    ((key - Keypad.FIRST_DIGIT + 1).toLong() shl (BITS * (PACKED - 1 - step)))
+            }
+            if (code >= 0 && (count == 0 || packed[count - 1] != code)) {
+                packed[count++] = code
+            }
+        }
+        return packed.copyOf(count)
     }
 
     /**
@@ -237,6 +345,20 @@ class Dictionary private constructor(
 
         private const val ESCAPE = 0xFF
         private const val COMPLETION_SCAN = 4096
+
+        /**
+         * Keys held in one packed sequence, and the bits each one takes.
+         *
+         * Four bits rather than three, which was the first attempt and was wrong: the eight keys
+         * are stored as 1-8 so that the zero padding sorts below every one of them, and eight does
+         * not fit in three bits. The range above the last key then ran over the sign bit and every
+         * sequence starting with `9` reported as unknown.
+         *
+         * Fifteen keys is longer than nearly every word either language spells. Past that the
+         * answer is given on the first fifteen, which can only say yes where the truth is no.
+         */
+        private const val PACKED = 15
+        private const val BITS = 4
 
         fun read(input: InputStream): Dictionary {
             val bytes = input.readBytes()

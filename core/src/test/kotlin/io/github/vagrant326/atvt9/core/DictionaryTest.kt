@@ -101,4 +101,52 @@ class DictionaryTest {
             )
         }
     }
+
+    /**
+     * The prefix test against the thing it replaced: a scan of every word.
+     *
+     * Written as a comparison rather than as expectations, because the packed index is an
+     * optimisation and the only property that matters is that it agrees with the slow truth. It
+     * caught the first version, where the eight keys were stored in three bits and everything
+     * starting with `9` came back unknown.
+     */
+    @Test
+    fun `a prefix is live exactly when some word starts with it`() {
+        val words = listOf("kot", "kos", "los", "to", "on", "anna", "ma", "mama", "żubr", "ćma")
+        val dictionary = DictionaryWriter.of(*words.map { it to 100 }.toTypedArray())
+        val sequences = words.mapNotNull(Keypad::sequenceOf)
+
+        for (first in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT) {
+            for (second in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT) {
+                for (prefix in listOf("$first", "$first$second")) {
+                    assertEquals(
+                        sequences.any { it.startsWith(prefix) },
+                        dictionary.hasPrefix(prefix),
+                        "hasPrefix($prefix)",
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the shipped dictionaries agree with themselves about every two-key prefix`() {
+        for (language in listOf("pl", "en")) {
+            val file = File("../app/src/main/assets/dictionary-$language.bin")
+            if (!file.exists()) {
+                continue
+            }
+            val dictionary = file.inputStream().use(Dictionary::read)
+            for (first in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT) {
+                for (second in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT) {
+                    val prefix = "$first$second"
+                    assertEquals(
+                        dictionary.candidates(prefix, limit = 1).isNotEmpty(),
+                        dictionary.hasPrefix(prefix),
+                        "$language hasPrefix($prefix)",
+                    )
+                }
+            }
+        }
+    }
 }

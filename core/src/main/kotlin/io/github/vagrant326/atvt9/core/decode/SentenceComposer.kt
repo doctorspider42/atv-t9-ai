@@ -128,6 +128,34 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
         }
     }
 
+    /**
+     * The presses waiting for a reading, or null when the reading is current.
+     *
+     * With [apply], this is how the decoding happens somewhere other than here. The work is not
+     * fast enough to sit on the thread that draws the keyboard — on a television it is hundreds of
+     * milliseconds, and a press arriving during it waits — so the caller may take these keys away,
+     * read them wherever it likes, and bring the answer back.
+     */
+    fun pending(): String? = if (stale) keys.toString() else null
+
+    /**
+     * Takes a reading worked out elsewhere. Returns whether it was still wanted.
+     *
+     * A reading is refused when the presses have moved on since it was asked for, because it is
+     * then an answer to a question nobody is asking any more: showing it would put a word on
+     * screen that the last press has already ruled out. The presses it was for are the whole
+     * identity of the answer, which is why they come back with it.
+     */
+    fun apply(forKeys: String, found: List<Hypothesis>): Boolean {
+        if (forKeys != keys.toString()) {
+            return false
+        }
+        readings = found
+        selected = 0
+        stale = false
+        return true
+    }
+
     /** Works out the readings for the presses so far. The caller chooses when this is worth it. */
     fun settle() {
         if (!stale) {
