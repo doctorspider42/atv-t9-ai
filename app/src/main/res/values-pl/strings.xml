@@ -15,6 +15,10 @@
     <string name="settings_section_typing">Jak pisać</string>
     <string name="settings_section_try">Wypróbuj</string>
 
+    <string name="settings_sentence">Czytaj całe zapytanie naraz</string>
+    <string name="settings_sentence_note">Naciśnięcia są czytane jako zdanie, a nie słowo po słowie, więc pominięta spacja nic nie kosztuje, a klawisz chybiony o jeden wciąż może wyjść dobrze. Spacja, którą naciśniesz, zamyka to, co przed nią — tak jak w telefonie. Wyłącz, żeby wrócić do klawiatury takiej, jaka była.</string>
+    <string name="settings_turned_numpad">Czytaj numpad jak pilota</string>
+    <string name="settings_turned_numpad_note">Do testów na komputerze. Pilot ma 1 2 3 w górnym rzędzie, a klawiatura biurkowa 7 8 9 — te same dziewięć klawiszy do góry nogami. Nikt nie ma numpada na kanapie.</string>
     <string name="settings_learning">Zapamiętuj nowe słowa</string>
     <string name="settings_learning_note">Słowo, którego słownik nie miał, kosztuje jedno powolne literowanie — raz. Po wyłączeniu kosztuje tyle za każdym razem. Hasła i pola, które proszą, żeby się z nich nie uczyć, nie są zapamiętywane niezależnie od tego ustawienia.</string>
 

@@ -175,6 +175,17 @@ class Preferences(context: Context) {
         get() = store.getBoolean(KEY_SENTENCE, true)
         set(value) = store.edit().putBoolean(KEY_SENTENCE, value).apply()
 
+    /**
+     * Whether a desk keyboard's numpad is read as a remote's, which is upside down to it.
+     *
+     * A testing affordance and nothing else: nobody has a numpad on a sofa. It earns its place
+     * because the alternative is testing the error model against the wrong geometry, and the
+     * error model is the part of this keyboard that cannot be reasoned about, only measured.
+     */
+    var isTurnedNumpad: Boolean
+        get() = store.getBoolean(KEY_TURNED_NUMPAD, false)
+        set(value) = store.edit().putBoolean(KEY_TURNED_NUMPAD, value).apply()
+
     var isLearning: Boolean
         get() = store.getBoolean(KEY_LEARNING, true)
         set(value) = store.edit().putBoolean(KEY_LEARNING, value).apply()
@@ -209,6 +220,7 @@ class Preferences(context: Context) {
     private companion object {
         const val NAME = "t9"
         const val KEY_SENTENCE = "sentence"
+        const val KEY_TURNED_NUMPAD = "turned_numpad"
         const val KEY_ENABLED_LANGUAGES = "enabled_languages"
         const val KEY_ACTIVE_LANGUAGE = "active_language"
         const val KEY_TRIGGER_KEYCODE = "trigger_keycode"

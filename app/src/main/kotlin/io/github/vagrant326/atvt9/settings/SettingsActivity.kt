@@ -68,6 +68,7 @@ class SettingsActivity : Activity() {
 
         content.addView(sectionLabel(getString(R.string.settings_section_keyboard)))
         content.addView(hintModeRow())
+        content.addView(sentenceRow())
         content.addView(learningRow())
 
         content.addView(sectionLabel(getString(R.string.settings_section_words)))
@@ -266,6 +267,47 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             addView(control)
             addView(explain)
+        }
+    }
+
+    /**
+     * Reading a whole query at once, and — on the dev channel only — reading a desk numpad as a
+     * remote.
+     *
+     * The second is a testing affordance: nobody has a numpad on a sofa, and it exists so the
+     * error model can be measured against the geometry it will meet rather than against a mirror
+     * of it. It is hidden on the production channel rather than merely unused, because a setting
+     * nobody can explain is a setting somebody will turn on and then report as a bug.
+     */
+    private fun sentenceRow(): View {
+        lateinit var value: TextView
+
+        val control = row(
+            getString(R.string.settings_sentence),
+            checkbox(preferences.isSentence),
+        ) {
+            preferences.isSentence = !preferences.isSentence
+            value.text = checkbox(preferences.isSentence)
+        }
+        value = control.getChildAt(1) as TextView
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(control)
+            addView(caption(getString(R.string.settings_sentence_note)))
+            if (BuildConfig.DEBUG || BuildConfig.FLAVOR == "dev") {
+                lateinit var turned: TextView
+                val pad = row(
+                    getString(R.string.settings_turned_numpad),
+                    checkbox(preferences.isTurnedNumpad),
+                ) {
+                    preferences.isTurnedNumpad = !preferences.isTurnedNumpad
+                    turned.text = checkbox(preferences.isTurnedNumpad)
+                }
+                turned = pad.getChildAt(1) as TextView
+                addView(pad)
+                addView(caption(getString(R.string.settings_turned_numpad_note)))
+            }
         }
     }
 

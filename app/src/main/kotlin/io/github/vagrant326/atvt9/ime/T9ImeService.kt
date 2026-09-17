@@ -114,7 +114,42 @@ class T9ImeService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         strip = CandidateStripView(this)
+        // The grid was a label, because a television cannot be touched. Answering to a finger as
+        // well costs nothing there and is what makes the keyboard testable on an emulator, which
+        // until now meant building an APK and walking to the sofa for every change.
+        strip.onKey = { key -> tap(key, held = false) }
+        strip.onHold = { key -> tap(key, held = true) }
         return strip
+    }
+
+    /**
+     * A cell of the on-screen grid, as the action the same key would produce on the remote.
+     *
+     * Routed through [handle] rather than acting directly, so a tap and a press are the same
+     * event by the time anything decides what it means. Two keys exist only here: a television
+     * remote has a delete and an OK of its own, and the grid had two cells going spare.
+     */
+    private fun tap(key: Char, held: Boolean) {
+        val action = when {
+            key == CandidateStripView.DELETE_KEY ->
+                if (held) Action.WordDelete else Action.Delete
+
+            key == CandidateStripView.COMMIT_KEY -> Action.Commit
+            key == '0' -> if (held) Action.ToggleCase else Action.Space
+            key == '1' -> if (held) {
+                if (engine.isComposing || composer?.isComposing == true) {
+                    Action.Spell
+                } else {
+                    Action.ToggleSymbols
+                }
+            } else {
+                Action.Punctuation
+            }
+
+            key in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT -> Action.Digit(key)
+            else -> return
+        }
+        handle(action)
     }
 
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
@@ -167,6 +202,8 @@ class T9ImeService : InputMethodService() {
      * by default — and every other event is handed straight back to the system.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        @Suppress("NAME_SHADOWING")
+        val keyCode = KeyBindings.numberKey(keyCode, preferences.isTurnedNumpad)
         if (!isInputViewShown) {
             val trigger = preferences.triggerKeyCode
             if (trigger != KeyBindings.NO_KEY && keyCode == trigger && event.repeatCount == 0) {
@@ -517,6 +554,19 @@ class T9ImeService : InputMethodService() {
                     return false // nothing pending: the press belongs to the field, as before
                 }
                 sendSentence(composer)
+                return true
+            }
+
+            // Held delete drops the presses still in the air, or, when there are none, the word
+            // behind the cursor. Without this it fell to the branch below and *committed* the
+            // query, which is the opposite of what anybody holding delete is asking for.
+            is Action.WordDelete -> {
+                if (composer.isComposing) {
+                    composer.clear()
+                    currentInputConnection?.finishComposingText()
+                } else {
+                    deleteWord()
+                }
                 return true
             }
 

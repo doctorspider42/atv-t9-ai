@@ -28,6 +28,10 @@
     <string name="settings_section_typing">How to type</string>
     <string name="settings_section_try">Try it</string>
 
+    <string name="settings_sentence">Read the whole query at once</string>
+    <string name="settings_sentence_note">Presses are read as a sentence rather than a word at a time, so a space you forget costs nothing and a key you miss by one can still come out right. A space you do press ends what came before it, the way a phone does. Turn this off for the keyboard as it was.</string>
+    <string name="settings_turned_numpad">Read a numpad as a remote</string>
+    <string name="settings_turned_numpad_note">For testing on a computer. A remote runs 1 2 3 along the top of its number pad and a desk keyboard runs 7 8 9 — the same nine keys upside down. Nobody has a numpad on a sofa.</string>
     <string name="settings_learning">Remember new words</string>
     <string name="settings_learning_note">A word you type that the dictionary did not have costs one slow spelling, once. Turn this off and it costs that every time. Passwords and fields that ask not to be learnt from are never remembered, whatever this says.</string>
 

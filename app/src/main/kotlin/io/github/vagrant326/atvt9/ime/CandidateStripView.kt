@@ -62,6 +62,19 @@ class CandidateStripView(context: Context) : LinearLayout(context) {
 
     private val keypadCells = mutableMapOf<Char, TextView>()
 
+    /**
+     * Where a tap on the grid goes, or null on a television, where nothing can tap it.
+     *
+     * The grid was drawn as a label — nothing is printed on the remote, so the only place to
+     * learn that `w` is on `9` is here. Making it answer to a finger as well costs one listener
+     * and makes the keyboard testable on anything with a screen, which until now meant a
+     * sideload and a sofa for every change.
+     */
+    var onKey: ((Char) -> Unit)? = null
+
+    /** The same, for a press held: delete becomes the word, `0` becomes the case. */
+    var onHold: ((Char) -> Unit)? = null
+
     private val spellValue = hintValue()
     private val languageValue = hintValue()
     private val deleteValue = hintValue()
@@ -146,7 +159,10 @@ class CandidateStripView(context: Context) : LinearLayout(context) {
      * are shown at once and a switch changes nothing here.
      */
     private fun buildKeypad() {
-        for (row in listOf("123", "456", "789", " 0 ")) {
+        // The bottom row had two cells going spare either side of `0`. A remote has no use for
+        // them and a finger does: delete is the key people reach for most and the only one with
+        // nowhere to be, and OK ends the query.
+        for (row in listOf("123", "456", "789", "${DELETE_KEY}0${COMMIT_KEY}")) {
             val line = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
@@ -168,6 +184,9 @@ class CandidateStripView(context: Context) : LinearLayout(context) {
     private fun cellText(key: Char, letterCase: LetterCase, symbols: Boolean): String {
         if (key == ' ') {
             return ""
+        }
+        if (key == DELETE_KEY || key == COMMIT_KEY) {
+            return key.toString()
         }
         if (symbols && key in Keypad.FIRST_DIGIT..Keypad.LAST_DIGIT) {
             return "$key\n${Keypad.symbolsOn(key)}"
@@ -192,6 +211,11 @@ class CandidateStripView(context: Context) : LinearLayout(context) {
     private fun cell(key: Char): TextView {
         return TextView(context).apply {
             text = cellText(key, LetterCase.LOWER, symbols = false)
+            if (key != ' ') {
+                isClickable = true
+                setOnClickListener { onKey?.invoke(key) }
+                setOnLongClickListener { onHold?.invoke(key); onHold != null }
+            }
             setTextColor(MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             gravity = Gravity.CENTER
@@ -355,13 +379,23 @@ class CandidateStripView(context: Context) : LinearLayout(context) {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
-        const val BACKGROUND = 0xFF08080B.toInt()
-        const val ACCENT = 0xFF7FD1FF.toInt()
-        const val SECONDARY = 0xFFB0B0BC.toInt()
-        const val MUTED = 0xFF6B6B78.toInt()
-        const val WARNING = 0xFFE0A33C.toInt()
-        const val CELL = 0xFF1A1A22.toInt()
+    companion object {
+
+        /**
+         * The two cells a remote does not have and a finger needs.
+         *
+         * Glyphs rather than words so the cell stays one line and needs no translating, and
+         * outside the digit range so nothing that reads a key as a digit can mistake them.
+         */
+        const val DELETE_KEY = '⌫'
+        const val COMMIT_KEY = '⏎'
+
+        private const val BACKGROUND = 0xFF08080B.toInt()
+        private const val ACCENT = 0xFF7FD1FF.toInt()
+        private const val SECONDARY = 0xFFB0B0BC.toInt()
+        private const val MUTED = 0xFF6B6B78.toInt()
+        private const val WARNING = 0xFFE0A33C.toInt()
+        private const val CELL = 0xFF1A1A22.toInt()
     }
 }
 

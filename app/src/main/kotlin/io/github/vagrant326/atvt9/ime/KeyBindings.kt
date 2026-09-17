@@ -109,6 +109,35 @@ object KeyBindings {
     const val NO_KEY = 0
 
     /**
+     * A PC numpad's keys read as the number keys a remote reports, for testing on an emulator.
+     *
+     * A remote sends `KEYCODE_0`-`KEYCODE_9`; a desk keyboard's numpad sends `KEYCODE_NUMPAD_0`
+     * upwards, which nothing here was listening for — so the pad that most resembles a remote was
+     * the one pad that typed nothing at all.
+     *
+     * [turned] answers the second half of the resemblance. A remote runs `1 2 3` along the top of
+     * its pad and a numpad runs `7 8 9`: the same nine keys in the same grid, upside down. Turning
+     * it over makes a slip of the thumb land on the digit it would land on at home, which is worth
+     * nothing while presses are read literally and is the whole experiment once the decoder starts
+     * modelling which key was meant. The middle row and `0` are the same either way up.
+     *
+     * Anything that is not a numpad key comes back untouched.
+     */
+    fun numberKey(keyCode: Int, turned: Boolean): Int {
+        if (keyCode !in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9) {
+            return keyCode
+        }
+        val digit = keyCode - KeyEvent.KEYCODE_NUMPAD_0
+        val read = when {
+            !turned -> digit
+            digit in 1..3 -> digit + 6
+            digit in 7..9 -> digit - 6
+            else -> digit
+        }
+        return KeyEvent.KEYCODE_0 + read
+    }
+
+    /**
      * Keys the keyboard needs for itself, and therefore cannot be assigned as a binding.
      *
      * Longer than the equivalent list in H4-Writer, and that is the trade this method makes:
