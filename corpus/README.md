@@ -65,3 +65,32 @@ line `build.py` prints before believing a word count.
 part measures how well the dictionary covers *more subtitles*. The keyboard's real input is
 `../bench/queries-v1.tsv`, which is mostly proper nouns and deliberately contains
 out-of-dictionary channel names. `./gradlew :core:bench` is the figure that counts.
+
+## The typing record
+
+`errors.py` reads what the harness wrote while somebody copied out a text at full speed and
+reports how their thumb behaves. Not a corpus script like the other two — it turns a recording
+into the error model the decoder is tuned against.
+
+```bash
+./gradlew :core:harness       # Record, copy out a text, stop whenever
+python3 errors.py ../bench/typing.tsv
+```
+
+Nothing in it is trained. The phrase on screen is known, so the keys it should have produced are
+derivable, and every row is a fully aligned pair: the counts fall straight out. The alternative
+is inventing the numbers, and a decoder tuned against an invented noise model is tuned to
+somebody's imagination rather than to the person holding the remote.
+
+Two things the first real recording showed, neither of them guessable:
+
+**A doubled press is swallowed one time in six.** On a keypad where `mnońó` share a key that is
+not a rare event: `on`, `no`, `nn` are two presses of `6`, and 16.4% of such pairs arrived as one
+press against 1.4% for a press standing on its own. An order of magnitude apart, so they are two
+different events and the decoder needs them costed separately.
+
+**Slips land next door.** Four in five wrong keys were a physically adjacent key, diagonals
+included, which is what justifies an adjacency-weighted substitution cost. It is only knowable
+because the record carries the `pad` column: the same digit sits in a different place depending
+on whether the keypad is being read as itself or as a remote, and without knowing which, the
+geometry is unrecoverable afterwards.
