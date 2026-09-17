@@ -119,6 +119,23 @@ class Dictionary private constructor(
     }
 
     /**
+     * Whether any word starts with [digits], which is how a search knows a branch is dead.
+     *
+     * The decoder asks this far more often than it asks anything else: a beam that cannot tell a
+     * live prefix from a dead one spends its width on sequences no word will ever complete, and
+     * the width is the whole budget. One binary search over the checkpoints answers it, because
+     * the file is ordered by sequence and a prefix's words are therefore contiguous — the same
+     * property that makes completion cheap makes this cheap.
+     */
+    fun hasPrefix(digits: String): Boolean {
+        if (digits.isEmpty()) {
+            return true
+        }
+        val cursor = seek(digits) ?: return false
+        return cursor.advance() && cursor.sequence().startsWith(digits)
+    }
+
+    /**
      * Positions a cursor just before the first word whose sequence is at or after [digits].
      *
      * The binary search runs over checkpoints, then backs up one and walks. Backing up is not

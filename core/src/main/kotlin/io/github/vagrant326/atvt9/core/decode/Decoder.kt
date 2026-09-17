@@ -66,25 +66,37 @@ data class Source(
  * domain would underflow inside a sentence.
  */
 data class Weights(
-    /** How likely the presses are, given the word — the error model over keys. */
+    /**
+     * How much to trust the error model over the keys — what a wrong, missing or doubled press
+     * costs. The prices themselves live in the error model, where they were measured; this says
+     * how loudly they speak against the language.
+     */
     val input: Double = 1.0,
 
-    /** How likely the words are in that order. */
-    val languageModel: Double = 1.8,
+    /** How likely the words are in that order. Carried but unused until the n-grams exist. */
+    val languageModel: Double = 1.0,
 
     /** How common the word is on its own, which is all a unigram decoder has. */
-    val frequency: Double = 0.4,
+    val frequency: Double = 1.0,
 
-    /** What it costs to assume a press was wrong, missing or doubled. */
-    val edit: Double = -1.3,
-
-    /** What it costs to break a word where no `0` was pressed. */
-    val space: Double = -0.2,
+    /**
+     * How dearly to hold a word boundary where no `0` was pressed.
+     *
+     * Separate from [input] although it is measured the same way, because it is the one error the
+     * user makes on purpose: skipping the space is the point of the exercise, and how forgiving
+     * to be about it is a decision rather than an observation.
+     */
+    val space: Double = 1.0,
 
     /** How much a word's language being the expected one is worth. */
     val languagePrior: Double = 1.0,
 
-    /** What it costs for the language to change between one word and the next. */
+    /**
+     * What it costs for the language to change between one word and the next, in nats.
+     *
+     * A cost rather than a multiplier, unlike the rest: there is no model behind it to scale.
+     * `piątek the series` has to be able to pay it twice and still win.
+     */
     val languageSwitch: Double = -0.8,
 )
 

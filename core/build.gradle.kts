@@ -22,6 +22,22 @@ tasks.test {
 }
 
 /**
+ * How often the decoder recovers what was meant, from presses somebody really made.
+ *
+ * The figure the project turns on, and the one KSPC cannot give: KSPC counts presses assuming
+ * they land where they were aimed, and one press in eighteen does not. Reads the harness's
+ * recording, so it measures against real mistakes rather than invented noise.
+ */
+tasks.register<JavaExec>("accuracy") {
+    group = "verification"
+    description = "Decodes bench/typing.tsv and reports how often the phrase comes back"
+    mainClass.set("io.github.vagrant326.atvt9.core.bench.AccuracyKt")
+    classpath = sourceSets["test"].runtimeClasspath
+    workingDir = rootProject.projectDir
+    defaultCharacterEncoding = "UTF-8"
+}
+
+/**
  * KSPC over the query corpus, against the shipped dictionaries. Lives in the test source set so
  * the runner never reaches the APK.
  *
@@ -66,3 +82,4 @@ tasks.register<JavaExec>("bench") {
         "--dictionary-en", "app/src/main/assets/dictionary-en.bin",
     )
 }
+
