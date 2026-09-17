@@ -96,6 +96,10 @@ fun main(arguments: Array<String>) {
         return
     }
 
+    // How many readings to look at. Three is what a strip holds; a larger number says whether the
+    // right one is in the search at all, which is a different question from whether it is on top.
+    val kept = options["--readings"]?.toIntOrNull() ?: 3
+
     for ((name, sources) in configurations) {
         val decoder = BeamDecoder(sources, width = options["--width"]?.toIntOrNull() ?: 64)
         println("== $name ==")
@@ -109,6 +113,7 @@ fun main(arguments: Array<String>) {
             var missed = 0
             var possible = 0
             var rightWords = 0
+            var bestWords = 0
             var coveredWords = 0
             var allWords = 0
             val elapsed = measureTimeMillis {
@@ -123,7 +128,7 @@ fun main(arguments: Array<String>) {
                     if (exactReading(attempt.keys, sources.first().dictionary) == attempt.target) {
                         exact++
                     }
-                    val readings = decoder.decode(attempt.keys, limit = 3).map { it.text }
+                    val readings = decoder.decode(attempt.keys, limit = kept).map { it.text }
 
                     // A four-word phrase is wrong if one word is, so the phrase figure punishes a
                     // near miss exactly as hard as nonsense. The word figure is what says which of
@@ -132,6 +137,14 @@ fun main(arguments: Array<String>) {
                     val got = readings.firstOrNull()?.split(' ').orEmpty()
                     allWords += wanted.size
                     rightWords += wanted.indices.count { got.getOrNull(it) == wanted[it] }
+
+                    // What a better ranking could buy without touching the search: the best the
+                    // readings already contain. Everything between this and the line above is
+                    // reachable by knowing which word follows which, and nothing above it is.
+                    bestWords += readings.maxOfOrNull { reading ->
+                        val words = reading.split(' ')
+                        wanted.indices.count { words.getOrNull(it) == wanted[it] }
+                    } ?: 0
 
                     when {
                         readings.isEmpty() -> missed++
@@ -157,6 +170,10 @@ fun main(arguments: Array<String>) {
                         100.0 * rightWords / allWords,
                         elapsed / attempts.size,
                     )
+            )
+            println(
+                "   best reading words %5.1f%%   (what ranking alone could still win)"
+                    .format(100.0 * bestWords / allWords)
             )
         }
 
