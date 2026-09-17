@@ -5,6 +5,7 @@ import io.github.vagrant326.atvt9.core.Dictionary
 import io.github.vagrant326.atvt9.core.Keypad
 import io.github.vagrant326.atvt9.core.UserDictionary
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
@@ -17,17 +18,15 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JScrollPane
-import javax.swing.JSpinner
 import javax.swing.JTextArea
-import javax.swing.SpinnerNumberModel
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
+import javax.swing.filechooser.FileNameExtensionFilter
 
 /**
  * The keyboard, driven from a PC keyboard, with the strip and the state visible.
@@ -39,9 +38,9 @@ import javax.swing.WindowConstants
  * user dictionary has learnt so far.
  *
  * **Everything is set from the window, and what is set is remembered.** The command line still
- * takes the same options, but nothing is only reachable that way: which key does what, which
- * language, which text to copy out, where the record goes. A tool whose main use is sitting and
- * typing into it is a tool nobody should have to configure by relaunching it.
+ * takes the same options, but nothing is only reachable that way. The settings live on a screen
+ * of their own rather than beside the text: what is watched while typing is one line and a strip,
+ * and nineteen key bindings alongside them are nineteen things in the way.
  *
  *     ./gradlew :core:harness
  *     ./gradlew :core:harness --args="--keys 2255 0 63736"
@@ -56,8 +55,11 @@ fun main(arguments: Array<String>) {
     val settings = Settings(File(options["--settings"] ?: ".harness.properties"))
     options["--language"]?.takeIf { it in LANGUAGES }?.let { settings.language = it }
     options["--layout"]?.let { name ->
-        Pad.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
-            ?.let { settings.bindings.apply(it) }
+        Pad.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { pad ->
+            settings.pad = pad
+            settings.bindings.apply(pad)
+            settings.save()
+        }
     }
     options["--text"]?.let { settings.text = it }
     options["--targets"]?.let { settings.targets = it }
@@ -108,6 +110,9 @@ fun main(arguments: Array<String>) {
 
 private val LANGUAGES = listOf("pl", "en")
 
+/** How long a phrase to copy out is. Cycled from a short list rather than typed into a field. */
+private val CHUNKS = listOf(2, 3, 4, 5, 6, 8, 10)
+
 /**
  * Which digit a key on the numeric keypad stands for, as a starting point for the bindings.
  *
@@ -136,6 +141,8 @@ enum class Pad {
         digit in '7'..'9' -> digit - 6
         else -> digit // 4 5 6 are the middle row either way up, and 0 is not in the grid
     }
+
+    fun next(): Pad = entries[(ordinal + 1) % entries.size]
 }
 
 /**
@@ -153,7 +160,17 @@ class Settings(private val file: File) {
         }
     }
 
-    val bindings: Bindings = Bindings.load(properties)
+    var pad: Pad
+        get() = Pad.entries.firstOrNull { it.name == properties.getProperty("pad") } ?: Pad.NUMPAD
+        set(value) = set("pad", value.name)
+
+    /**
+     * Built on the stored preset rather than on the default one.
+     *
+     * Otherwise a bind the file happens not to name falls back to a default from the wrong layout,
+     * and the screen then shows `numpad` above a row of keys that are plainly the other way up.
+     */
+    val bindings: Bindings = Bindings.load(properties, pad)
 
     var language: String
         get() = properties.getProperty("language", "pl")
@@ -175,8 +192,10 @@ class Settings(private val file: File) {
         get() = properties.getProperty("chunk", "4").toIntOrNull() ?: 4
         set(value) = set("chunk", value.toString())
 
-    fun dictionary(language: String): String =
-        properties.getProperty("dictionary-$language", "app/src/main/assets/dictionary-$language.bin")
+    fun dictionary(language: String): String = properties.getProperty(
+        "dictionary-$language",
+        "app/src/main/assets/dictionary-$language.bin",
+    )
 
     fun dictionary(language: String, path: String) = set("dictionary-$language", path)
 
@@ -192,17 +211,22 @@ class Settings(private val file: File) {
 }
 
 /**
- * The window: what is being typed on the left, everything that can be changed on the right.
+ * The window: one screen for typing, one for settings, and a strip of buttons above both.
  *
- * The typing area is deliberately labels rather than a text field. A real editor brings its own
+ * The typing screen is deliberately labels rather than a text field. A real editor brings its own
  * caret, its own selection and its own idea of what a key means, and then what is on screen is
  * Swing's answer rather than the keyboard's. Everything shown is read from [Session] and nothing
  * from a widget.
  *
  * Keys are taken from a dispatcher on the focus manager rather than a listener on a panel,
- * because the controls on the right are real buttons: with a listener the first click would move
- * the focus and typing would stop working. The controls are all non-focusable for the same
- * reason — they answer to the mouse and never to the keyboard, so nothing typed can press one.
+ * because the controls are real buttons: with a listener the first click would move the focus and
+ * typing would stop working. The controls are all non-focusable for the same reason — they answer
+ * to the mouse and never to the keyboard, so nothing typed can press one.
+ *
+ * Every control is drawn here rather than by the platform. The system look paints a light face
+ * with dark text, which on a dark window is black on black; rather than fight it one widget at a
+ * time, buttons are flat panels of known colour and the settings that have two or three values
+ * are buttons that cycle through them.
  */
 private class Window(
     private val dictionaries: Map<String, Dictionary?>,
@@ -221,65 +245,45 @@ private class Window(
     /** Set while waiting for the key that a bind is being pointed at. */
     private var capturing: Bind? = null
 
-    private val fieldLabel = label(28f)
-    private val stripLabel = label(18f)
-    private val statusLabel = label(13f)
+    private var showing = TYPING
+
+    private val screens = CardLayout()
+    private val body = JPanel(screens).apply { background = BACKGROUND }
+
+    private val fieldLabel = label(30f, FOREGROUND)
+    private val stripLabel = label(18f, FOREGROUND)
+    private val statusLabel = label(13f, DIM)
     private val log = JTextArea().apply {
         isEditable = false
         background = BACKGROUND
         foreground = DIM
         font = Font(Font.MONOSPACED, Font.PLAIN, 13)
-        border = BorderFactory.createEmptyBorder(8, 12, 8, 12)
+        border = BorderFactory.createEmptyBorder(6, 0, 6, 0)
     }
 
-    private val bindButtons = Bind.entries.associateWith { bind ->
-        button("") { capture(bind) }
-    }
-    private val recordButton = button("Start recording") { toggleRecording() }
-    private val phrasesLabel = label(12f)
-    private val recordToLabel = label(12f)
-    private val chunkSpinner = JSpinner(SpinnerNumberModel(settings.chunk, 1, 20, 1)).apply {
-        isFocusable = false
-        addChangeListener {
-            settings.chunk = value as Int
-            refreshSources()
-        }
-    }
+    private val bindButtons = Bind.entries.associateWith { bind -> button("") { capture(bind) } }
+    private val languageButton = button("") { switchLanguage() }
+    private val padButton = button("") { switchPad() }
+    private val chunkButton = button("") { switchChunk() }
+    private val textButton = button("") { chooseText() }
+    private val targetsButton = button("") { chooseTargets() }
+    private val recordToButton = button("") { chooseRecord() }
+    private val dictionaryButton = button("") { chooseDictionary() }
+    private val recordButton = button("Record") { toggleRecording() }
+    private val phrasesLabel = label(13f, DIM)
 
     init {
         defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
-        preferredSize = Dimension(1240, 800)
+        preferredSize = Dimension(1180, 720)
 
-        val typing = JPanel(BorderLayout()).apply {
-            background = BACKGROUND
-            border = BorderFactory.createEmptyBorder(16, 16, 16, 16)
-            add(
-                JPanel().apply {
-                    background = BACKGROUND
-                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                    add(fieldLabel)
-                    add(Box.createVerticalStrut(12))
-                    add(stripLabel)
-                    add(Box.createVerticalStrut(8))
-                    add(statusLabel)
-                },
-                BorderLayout.NORTH,
-            )
-            add(
-                JScrollPane(log).apply {
-                    border = BorderFactory.createEmptyBorder(12, 0, 0, 0)
-                    // A scroll pane paints its own viewport, and Swing's default for that is
-                    // white. Left alone it puts a lit panel in the middle of a dark window.
-                    viewport.background = BACKGROUND
-                    background = BACKGROUND
-                }
-            )
-        }
+        body.add(typingScreen(), TYPING)
+        body.add(settingsScreen(), SETTINGS)
 
         contentPane = JPanel(BorderLayout()).apply {
             background = BACKGROUND
-            add(typing)
-            add(controls(), BorderLayout.EAST)
+            border = BorderFactory.createEmptyBorder(14, 18, 14, 18)
+            add(toolbar(), BorderLayout.NORTH)
+            add(body)
         }
 
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher { event ->
@@ -288,9 +292,7 @@ private class Window(
 
         pack()
         setLocationRelativeTo(null)
-        refreshBinds()
-        refreshSources()
-        render()
+        refresh()
     }
 
     // ---- keys -------------------------------------------------------------------------------
@@ -300,23 +302,33 @@ private class Window(
         val stroke = Stroke.of(event)
 
         capturing?.let { bind ->
-            capturing = null
             if (event.keyCode != KeyEvent.VK_ESCAPE) {
                 settings.bindings.rebind(bind, stroke)
                 settings.save()
             }
-            refreshBinds()
+            capturing = null
+            refresh()
             return true
+        }
+
+        // On the settings screen nothing is being typed into the keyboard, so a key means whatever
+        // that screen makes of it and nothing is consumed on the keyboard's behalf.
+        if (showing == SETTINGS) {
+            if (event.keyCode == KeyEvent.VK_ESCAPE) {
+                show(TYPING)
+                return true
+            }
+            return false
         }
 
         val action = settings.bindings.actionFor(stroke) ?: return false
         recorder?.let {
             record(it, action)
-            render()
+            refresh()
             return true
         }
         session.press(action)
-        render()
+        refresh()
         return true
     }
 
@@ -330,14 +342,8 @@ private class Window(
      * Escape cancels, and clicking a different row moves the capture rather than arming two.
      */
     private fun capture(bind: Bind) {
-        refreshBinds()
         capturing = bind
-        bindButtons.getValue(bind).apply {
-            text = "press a key…"
-            foreground = Color.BLACK
-            background = ACCENT
-            isOpaque = true
-        }
+        refresh()
     }
 
     /**
@@ -358,102 +364,176 @@ private class Window(
             else -> return
         }
         if (recorder.isFinished) {
-            log.append("-- ${recorder.targets.size} phrases done, written to ${settings.record}\n")
+            note("${recorder.targets.size} phrases done, written to ${settings.record}")
             stopRecording()
+        }
+    }
+
+    // ---- screens ----------------------------------------------------------------------------
+
+    private fun show(screen: String) {
+        showing = screen
+        screens.show(body, screen)
+        refresh()
+    }
+
+    private fun toolbar() = JPanel(BorderLayout()).apply {
+        background = BACKGROUND
+        border = BorderFactory.createEmptyBorder(0, 0, 14, 0)
+        add(
+            line(
+                button("Type") { show(TYPING) },
+                button("Settings") { show(SETTINGS) },
+                button("Open a text…") { chooseText() },
+                recordButton,
+            ),
+            BorderLayout.WEST,
+        )
+        add(line(phrasesLabel), BorderLayout.EAST)
+    }
+
+    private fun typingScreen() = JPanel(BorderLayout()).apply {
+        background = BACKGROUND
+        add(
+            JPanel().apply {
+                background = BACKGROUND
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = BorderFactory.createEmptyBorder(22, 4, 18, 4)
+                add(fieldLabel)
+                add(Box.createVerticalStrut(18))
+                add(stripLabel)
+                add(Box.createVerticalStrut(14))
+                add(statusLabel)
+            },
+            BorderLayout.NORTH,
+        )
+        add(
+            JPanel(BorderLayout()).apply {
+                background = BACKGROUND
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(1, 0, 0, 0, LINE),
+                    BorderFactory.createEmptyBorder(8, 4, 0, 4),
+                )
+                add(label(12f, DIM).apply { text = "SUBMITTED" }, BorderLayout.NORTH)
+                add(
+                    JScrollPane(log).apply {
+                        border = BorderFactory.createEmptyBorder()
+                        background = BACKGROUND
+                        viewport.background = BACKGROUND
+                    }
+                )
+            }
+        )
+    }
+
+    /**
+     * Everything that can be changed, on a screen of its own.
+     *
+     * Two columns and one width for every control, because the list is long and a column of
+     * ragged buttons is a list nobody scans. The bindings are the bulk of it and they are in the
+     * remote's order rather than a tidy one: somebody rebinding has a remote in their hand and is
+     * looking for the same thing in a list.
+     */
+    private fun settingsScreen(): Component {
+        val panel = JPanel().apply {
+            background = BACKGROUND
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = BorderFactory.createEmptyBorder(4, 4, 12, 18)
+        }
+
+        panel.add(heading("Dictionary"))
+        panel.add(row("language", languageButton))
+        panel.add(row("dictionary file", dictionaryButton))
+        panel.add(row("start cold again", button("Clear what was learnt") { reset(forget = true) }))
+        panel.add(row("", button("Clear the field") { reset(forget = false) }))
+
+        panel.add(heading("Recording"))
+        panel.add(row("text to copy out", textButton))
+        panel.add(row("or a list of queries", targetsButton))
+        panel.add(row("words per phrase", chunkButton))
+        panel.add(row("write the record to", recordToButton))
+
+        panel.add(heading("Keys"))
+        panel.add(row("numpad reads as", padButton))
+        for (bind in Bind.entries) {
+            panel.add(row(labelOf(bind), bindButtons.getValue(bind)))
+        }
+        panel.add(Box.createVerticalStrut(10))
+        panel.add(row("", button("Restore the defaults") { restoreBindings() }))
+
+        return JScrollPane(panel).apply {
+            border = BorderFactory.createEmptyBorder()
+            background = BACKGROUND
+            viewport.background = BACKGROUND
+            verticalScrollBar.unitIncrement = 16
         }
     }
 
     // ---- controls ---------------------------------------------------------------------------
 
-    private fun controls(): Component {
-        val panel = JPanel().apply {
-            background = BACKGROUND
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = BorderFactory.createEmptyBorder(16, 8, 16, 16)
-        }
-
-        panel.add(heading("Dictionary"))
-        panel.add(
-            row(
-                "language",
-                JComboBox(LANGUAGES.toTypedArray()).apply {
-                    isFocusable = false
-                    selectedItem = language
-                    addActionListener {
-                        language = selectedItem as String
-                        settings.language = language
-                        session.dictionary = dictionaries[language]
-                        render()
-                    }
-                },
-            )
-        )
-        panel.add(row("", button("Clear what was learnt") { reset(forget = true) }))
-        panel.add(row("", button("Clear the field") { reset(forget = false) }))
-
-        panel.add(heading("Keys"))
-        panel.add(
-            row(
-                "numpad reads as",
-                JComboBox(Pad.entries.map { it.name.lowercase() }.toTypedArray()).apply {
-                    isFocusable = false
-                    addActionListener {
-                        settings.bindings.apply(Pad.entries[selectedIndex])
-                        settings.save()
-                        refreshBinds()
-                    }
-                },
-            )
-        )
-        for (bind in Bind.entries) {
-            panel.add(row(labelOf(bind), bindButtons.getValue(bind)))
-        }
-
-        panel.add(heading("Recording"))
-        panel.add(phrasesLabel)
-        panel.add(row("", button("Copy out a text…") { chooseText() }))
-        panel.add(row("", button("Type a query list…") { chooseTargets() }))
-        panel.add(row("words per phrase", chunkSpinner))
-        panel.add(recordToLabel)
-        panel.add(row("", button("Write the record to…") { chooseRecord() }))
-        panel.add(row("", recordButton))
-
-        return JScrollPane(panel).apply {
-            background = BACKGROUND
-            viewport.background = BACKGROUND
-            border = BorderFactory.createEmptyBorder()
-            preferredSize = Dimension(370, 0)
-            verticalScrollBar.unitIncrement = 16
-        }
+    private fun switchLanguage() {
+        language = LANGUAGES[(LANGUAGES.indexOf(language) + 1) % LANGUAGES.size]
+        settings.language = language
+        session.dictionary = dictionaries[language]
+        refresh()
     }
 
-    private fun heading(text: String) = label(12f).apply {
-        foreground = ACCENT
-        this.text = text.uppercase()
-        border = BorderFactory.createEmptyBorder(14, 0, 5, 0)
-        alignmentX = LEFT_ALIGNMENT
+    private fun switchPad() {
+        settings.pad = settings.pad.next()
+        settings.bindings.apply(settings.pad)
+        settings.save()
+        refresh()
     }
 
-    private fun row(name: String, control: Component) = JPanel(BorderLayout(8, 0)).apply {
-        background = BACKGROUND
-        maximumSize = Dimension(Int.MAX_VALUE, 26)
-        alignmentX = LEFT_ALIGNMENT
-        if (name.isNotEmpty()) {
-            add(label(12f).apply { text = name }, BorderLayout.WEST)
+    private fun switchChunk() {
+        val at = CHUNKS.indexOf(settings.chunk)
+        settings.chunk = CHUNKS[(at + 1) % CHUNKS.size]
+        refresh()
+    }
+
+    private fun restoreBindings() {
+        settings.bindings.restore(settings.pad)
+        settings.save()
+        refresh()
+    }
+
+    private fun chooseText() = choose("Text to copy out", "txt")?.let { file ->
+        settings.text = file.path
+        note("${file.name}: ${phrases().second.size} phrases to copy out")
+        refresh()
+    }
+
+    private fun chooseTargets() = choose("List of queries", "tsv")?.let { file ->
+        settings.text = ""
+        settings.targets = file.path
+        refresh()
+    }
+
+    private fun chooseRecord() = choose("Write the record to", "tsv", save = true)?.let { file ->
+        settings.record = file.path
+        refresh()
+    }
+
+    private fun chooseDictionary() = choose("Dictionary for $language", "bin")?.let { file ->
+        settings.dictionary(language, file.path)
+        note("${file.name} takes effect on the next start")
+        refresh()
+    }
+
+    private fun choose(title: String, extension: String, save: Boolean = false): File? {
+        val chooser = JFileChooser(File(".").absoluteFile).apply {
+            dialogTitle = title
+            fileFilter = FileNameExtensionFilter("$title (*.$extension)", extension)
+            isAcceptAllFileFilterUsed = true
         }
-        add(control, BorderLayout.EAST)
+        val answer = if (save) chooser.showSaveDialog(this) else chooser.showOpenDialog(this)
+        return chooser.selectedFile.takeIf { answer == JFileChooser.APPROVE_OPTION }
     }
 
-    private fun button(text: String, onClick: () -> Unit) = JButton(text).apply {
-        isFocusable = false
-        font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
-        addActionListener { onClick() }
-    }
-
-    /** The letters a number key carries, so the list reads like the remote rather than like code. */
+    /** The letters a number key carries, so the list reads like the remote and not like code. */
     private fun labelOf(bind: Bind): String = when (bind) {
         Bind.KEY_0 -> "0   space"
-        Bind.KEY_1 -> "1   marks"
+        Bind.KEY_1 -> "1   . , - ' & : /"
         Bind.NEXT -> "next candidate"
         Bind.PREVIOUS -> "previous candidate"
         Bind.DELETE -> "delete"
@@ -464,29 +544,6 @@ private class Window(
         Bind.ABANDON -> "abandon the word"
         Bind.SETTLE -> "multitap timeout"
         else -> "${bind.digit}   ${Keypad.lettersOn(bind.digit!!)}"
-    }
-
-    private fun chooseText() = choose("Text to copy out")?.let { file ->
-        settings.text = file.path
-        refreshSources()
-    }
-
-    private fun chooseTargets() = choose("Query list (TSV)")?.let { file ->
-        settings.text = ""
-        settings.targets = file.path
-        refreshSources()
-    }
-
-    private fun chooseRecord() = choose("Write the record to", save = true)?.let { file ->
-        settings.record = file.path
-        refreshSources()
-    }
-
-    private fun choose(title: String, save: Boolean = false): File? {
-        val chooser = JFileChooser(File(".").absoluteFile)
-        chooser.dialogTitle = title
-        val answer = if (save) chooser.showSaveDialog(this) else chooser.showOpenDialog(this)
-        return chooser.selectedFile.takeIf { answer == JFileChooser.APPROVE_OPTION }
     }
 
     // ---- recording --------------------------------------------------------------------------
@@ -503,37 +560,38 @@ private class Window(
         if (text != null) {
             return text.nameWithoutExtension to Recorder.fragmentsOf(text.readText(), settings.chunk)
         }
-        val targets = File(settings.targets).takeIf { it.exists() } ?: return "queries" to emptyList()
+        val targets = File(settings.targets).takeIf { it.exists() }
+            ?: return "queries" to emptyList()
         return "queries" to Recorder.targetsFrom(targets)
     }
 
     private fun toggleRecording() {
         if (recorder != null) {
-            log.append("-- recording stopped\n")
+            note("recording stopped")
             stopRecording()
             return
         }
 
         val (source, targets) = phrases()
         if (targets.isEmpty()) {
-            log.append("-- nothing to type: choose a text or a query list first\n")
+            note("nothing to type: open a text or a list of queries first")
             return
         }
 
-        val recorder = Recorder(File(settings.record), targets, source)
-        this.recorder = recorder
-        recordButton.text = "Stop recording"
-        val resumed = if (recorder.position > 0) ", resuming at ${recorder.position + 1}" else ""
-        log.append("-- $source: ${targets.size} phrases into ${settings.record}$resumed\n")
-        log.append("-- type each one at full speed and press OK; do not fix mistakes\n")
-        render()
+        val started = Recorder(File(settings.record), targets, source)
+        recorder = started
+        val resumed = if (started.position > 0) ", resuming at ${started.position + 1}" else ""
+        note("$source: ${targets.size} phrases into ${settings.record}$resumed")
+        note("type each one at full speed and press OK; do not fix mistakes")
+        show(TYPING)
     }
 
     private fun stopRecording() {
         recorder = null
-        recordButton.text = "Start recording"
-        render()
+        refresh()
     }
+
+    private fun note(text: String) = log.append("-- $text\n")
 
     // ---- rendering --------------------------------------------------------------------------
 
@@ -547,40 +605,50 @@ private class Window(
      */
     private fun reset(forget: Boolean) {
         if (forget) {
-            log.append("-- user dictionary cleared\n")
+            note("user dictionary cleared")
         }
         val user = if (forget) UserDictionary() else session.user
         session = Session(dictionaries[language], user, clock = System::currentTimeMillis)
         logged = 0
-        render()
+        refresh()
     }
 
-    private fun refreshBinds() {
-        capturing = null
-        for ((bind, button) in bindButtons) {
+    /** Everything on screen, from the state and never from what a widget last had in it. */
+    private fun refresh() {
+        for ((bind, control) in bindButtons) {
             val keys = settings.bindings[bind]
-            button.text = if (keys.isEmpty()) "—" else keys.joinToString(" / ") { it.text }
-            button.isOpaque = false
-            button.background = null
-            button.foreground = null
+            control.text = when {
+                bind == capturing -> "press a key…"
+                keys.isEmpty() -> "—"
+                else -> keys.joinToString(" / ") { it.text }
+            }
+            control.foreground = if (bind == capturing) ACCENT else FOREGROUND
         }
-    }
 
-    private fun refreshSources() {
         val (source, targets) = phrases()
-        phrasesLabel.text = "$source — ${targets.size} phrases"
-        recordToLabel.text = "record: ${settings.record}"
+        languageButton.text = language
+        padButton.text = settings.pad.name.lowercase()
+        chunkButton.text = settings.chunk.toString()
+        textButton.text = tail(settings.text.ifEmpty { "none — using the list of queries" })
+        targetsButton.text = tail(settings.targets)
+        recordToButton.text = tail(settings.record)
+        dictionaryButton.text = tail(settings.dictionary(language))
+        recordButton.text = if (recorder == null) "Record" else "Stop recording"
+        phrasesLabel.text = recorder
+            ?.let { "recording ${it.position + 1} of ${it.targets.size}  ·  $source" }
+            ?: "$source  ·  ${targets.size} phrases"
+
+        recorder?.let { renderRecording(it) } ?: renderTyping()
     }
 
-    private fun render() {
-        recorder?.let {
-            renderRecording(it)
-            return
-        }
-
+    private fun renderTyping() {
         fieldLabel.text = html(
             span(escape(session.committed), FOREGROUND) +
-                span(escape(session.field.removePrefix(session.committed)), ACCENT, underline = true) +
+                span(
+                    escape(session.field.removePrefix(session.committed)),
+                    ACCENT,
+                    underline = true,
+                ) +
                 span("|", DIM)
         )
 
@@ -608,7 +676,7 @@ private class Window(
                     "mode ${session.mode.name.lowercase()}",
                     "case ${session.case.name.lowercase()}",
                     "learnt ${session.user.size}",
-                ).joinToString("   "),
+                ).joinToString("   ·   "),
                 DIM,
             )
         )
@@ -631,22 +699,77 @@ private class Window(
         stripLabel.text = html(span(recorder.pressed.ifEmpty { "—" }, ACCENT))
         statusLabel.text = html(
             span(
-                "recording ${recorder.position + 1} of ${recorder.targets.size}" +
-                    "   OK accepts   delete takes back a press   back starts the phrase again",
+                "OK accepts   ·   delete takes back a press   ·   back starts the phrase again",
                 DIM,
             )
         )
     }
 
-    private fun label(size: Float) = JLabel().apply {
-        foreground = FOREGROUND
+    // ---- widgets ----------------------------------------------------------------------------
+
+    private fun label(size: Float, colour: Color) = JLabel().apply {
+        foreground = colour
         font = Font(Font.SANS_SERIF, Font.PLAIN, size.toInt())
         alignmentX = LEFT_ALIGNMENT
     }
 
+    private fun heading(text: String) = label(12f, ACCENT).apply {
+        this.text = text.uppercase()
+        border = BorderFactory.createEmptyBorder(18, 0, 8, 0)
+    }
+
+    private fun row(name: String, control: Component) = JPanel(BorderLayout(12, 0)).apply {
+        background = BACKGROUND
+        maximumSize = Dimension(Int.MAX_VALUE, 28)
+        alignmentX = LEFT_ALIGNMENT
+        border = BorderFactory.createEmptyBorder(1, 0, 1, 0)
+        add(label(13f, FOREGROUND).apply { text = name })
+        add(control, BorderLayout.EAST)
+    }
+
+    private fun line(vararg parts: Component) = JPanel().apply {
+        background = BACKGROUND
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        for (part in parts) {
+            add(part)
+            add(Box.createHorizontalStrut(8))
+        }
+    }
+
+    /**
+     * A button drawn here rather than by the platform.
+     *
+     * The system look paints a light face with dark text, which on this window is black on black.
+     * Turning the content area off and filling a flat panel instead is the only way to get a
+     * control whose colours are known, and known is the whole requirement: the window is dark
+     * because the candidate strip has to be read at a glance.
+     */
+    private fun button(text: String, onClick: () -> Unit) = JButton(text).apply {
+        isFocusable = false
+        isContentAreaFilled = false
+        isOpaque = true
+        background = CONTROL
+        foreground = FOREGROUND
+        font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(LINE),
+            BorderFactory.createEmptyBorder(4, 12, 4, 12),
+        )
+        preferredSize = Dimension(240, 26)
+        addActionListener { onClick() }
+    }
+
+    /** A path is longer than a button and its tail is the part that identifies it. */
+    private fun tail(path: String) = if (path.length <= 36) path else "…" + path.takeLast(35)
+
     private companion object {
 
+        const val TYPING = "typing"
+        const val SETTINGS = "settings"
+
         val BACKGROUND: Color = Color(0x12, 0x14, 0x18)
+        val CONTROL: Color = Color(0x1E, 0x23, 0x2B)
+        val LINE: Color = Color(0x2E, 0x35, 0x40)
         val FOREGROUND: Color = Color(0xEC, 0xEF, 0xF4)
         val ACCENT: Color = Color(0x7F, 0xC2, 0xFF)
         val WARN: Color = Color(0xFF, 0x9C, 0x6B)

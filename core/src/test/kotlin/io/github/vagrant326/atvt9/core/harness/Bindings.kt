@@ -120,6 +120,12 @@ class Bindings private constructor(private val strokes: MutableMap<Bind, Mutable
         }
     }
 
+    /** Back to the defaults, every bind of them, for a keyboard nobody can type on any more. */
+    fun restore(pad: Pad) {
+        strokes.clear()
+        strokes.putAll(defaults(pad).strokes)
+    }
+
     /** Writes into [properties] rather than over a file, so one file can hold every setting. */
     fun save(properties: Properties) {
         for ((bind, keys) in strokes) {

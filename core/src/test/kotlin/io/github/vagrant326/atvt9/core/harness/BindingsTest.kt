@@ -50,6 +50,30 @@ class BindingsTest {
     }
 
     @Test
+    fun `restoring puts every bind back, not only the digits`() {
+        val bindings = Bindings.defaults().apply {
+            rebind(Bind.COMMIT, Stroke(KeyEvent.VK_TAB))
+            rebind(Bind.KEY_5, Stroke(KeyEvent.VK_F5))
+            restore(Pad.NUMPAD)
+        }
+
+        assertEquals(Action.Commit, bindings.actionFor(Stroke(KeyEvent.VK_ENTER)))
+        assertEquals(Action.Digit('5'), bindings.actionFor(Stroke(KeyEvent.VK_NUMPAD5)))
+        assertNull(bindings.actionFor(Stroke(KeyEvent.VK_TAB)))
+    }
+
+    @Test
+    fun `a bind the file does not name falls back to the stored layout, not the default one`() {
+        val properties = Properties()
+        Bindings.defaults(Pad.REMOTE).save(properties)
+        properties.remove(Bind.KEY_2.name)
+
+        // Loaded as a remote, KEY_2 must come back as the remote's 2 rather than the numpad's,
+        // or the screen shows one layout above a row of keys plainly in the other.
+        assertEquals(Action.Digit('2'), Bindings.load(properties, Pad.REMOTE).actionFor(Stroke(KeyEvent.VK_NUMPAD8)))
+    }
+
+    @Test
     fun `an unbound key is nobody's`() {
         assertNull(Bindings.defaults().actionFor(Stroke(KeyEvent.VK_F7)))
     }
