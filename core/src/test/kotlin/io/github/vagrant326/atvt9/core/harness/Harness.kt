@@ -361,6 +361,9 @@ private class Window(
             Action.Commit -> recorder.accept()
             Action.Delete -> recorder.undo()
             Action.Abandon -> recorder.restart()
+            // Walking back through the candidates means nothing while recording, and walking back
+            // through the phrases is the thing that was missing, so the key keeps its direction.
+            Action.Previous -> takeBack()
             else -> return
         }
         if (recorder.isFinished) {
@@ -386,6 +389,7 @@ private class Window(
                 button("Settings") { show(SETTINGS) },
                 button("Open a text…") { chooseText() },
                 recordButton,
+                button("Take back a phrase") { takeBack() },
             ),
             BorderLayout.WEST,
         )
@@ -587,6 +591,22 @@ private class Window(
         show(TYPING)
     }
 
+    /**
+     * Back to the phrase before this one, with what was typed into it.
+     *
+     * The one thing a fast thumb does that nothing else could undo: hitting OK halfway through a
+     * phrase wrote the attempt, moved on, and put the phrase out of reach for good.
+     */
+    private fun takeBack() {
+        val recorder = recorder ?: return
+        if (recorder.takeBack(System.currentTimeMillis())) {
+            note("back to phrase ${recorder.position + 1}, its row taken out of the file")
+        } else {
+            note("nothing to go back to")
+        }
+        refresh()
+    }
+
     private fun stopRecording() {
         recorder = null
         refresh()
@@ -703,7 +723,8 @@ private class Window(
         statusLabel.text = html(
             span(
                 "numpad reads as ${settings.pad.name.lowercase()}   ·   OK accepts   ·   " +
-                    "delete takes back a press   ·   back starts the phrase again",
+                    "delete takes back a press   ·   back starts the phrase again   ·   " +
+                    "previous returns to the phrase before",
                 DIM,
             )
         )

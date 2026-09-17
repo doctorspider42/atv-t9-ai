@@ -89,6 +89,34 @@ class RecorderTest {
     }
 
     @Test
+    fun `an attempt accepted too early comes back, presses and all`() {
+        val recorder = recorder("kot", "los")
+        recorder.press('5', atMillis = 1_000)
+        recorder.press('6', atMillis = 1_150)
+        recorder.accept() // the thumb was early: the phrase is not finished
+
+        assertEquals("los", recorder.target)
+        assertTrue(recorder.takeBack(atMillis = 9_000))
+        assertEquals("kot", recorder.target)
+        assertEquals("56", recorder.pressed)
+
+        // Its row is out of the file, so accepting again writes one attempt and not two.
+        assertEquals(listOf(Recorder.HEADER), File(directory, "typing.tsv").readLines())
+
+        recorder.press('8', atMillis = 9_400)
+        recorder.accept()
+        val row = File(directory, "typing.tsv").readLines()[1].split('\t')
+        assertEquals("568", row[4])
+        // The gap the taking back cost is recorded rather than smoothed away: it happened.
+        assertEquals("0,150,400", row[5])
+    }
+
+    @Test
+    fun `there is nothing before the first phrase`() {
+        assertFalse(recorder("kot").takeBack(atMillis = 0))
+    }
+
+    @Test
     fun `the phrases run out and the recording is over`() {
         val recorder = recorder("kot")
         assertFalse(recorder.isFinished)

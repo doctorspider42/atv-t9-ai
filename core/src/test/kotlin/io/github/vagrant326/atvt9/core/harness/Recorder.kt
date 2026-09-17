@@ -114,6 +114,50 @@ class Recorder(
         restart()
     }
 
+    /**
+     * Takes back the whole of the last accepted attempt: its row leaves the file, and its presses
+     * come back so the phrase can be finished.
+     *
+     * The thumb that is going fast enough to be worth recording is going fast enough to hit OK
+     * halfway through a phrase, and until this existed the attempt was written, gone, and the
+     * phrase behind it out of reach. That is a recording of a keyboard nobody was using.
+     *
+     * The restored presses keep their gaps but are rebased so the last one is *now*, which makes
+     * the gap before the next press the real time somebody spent noticing and undoing. That is a
+     * long gap in the middle of a phrase and it is honest: it happened. Anything analysing the
+     * timings has to discard outliers regardless, and a fabricated gap would be the one kind of
+     * error the file could not be corrected for later.
+     */
+    fun takeBack(atMillis: Long): Boolean {
+        if (position == 0) {
+            return false
+        }
+        position--
+        restart()
+
+        if (!out.exists()) {
+            return true
+        }
+        val rows = out.readLines().toMutableList()
+        val last = rows.indexOfLast { row ->
+            val columns = row.split('\t')
+            columns.size > 5 && columns[0] == source && columns[1].toIntOrNull() == position
+        }
+        if (last < 0) {
+            return true
+        }
+
+        val columns = rows.removeAt(last).split('\t')
+        out.writeText(rows.joinToString("\n", postfix = "\n"))
+
+        keys.append(columns[4])
+        val gaps = columns[5].split(',').mapNotNull { it.trim().toLongOrNull() }
+        var elapsed = 0L
+        val cumulative = gaps.map { gap -> elapsed += gap; elapsed }
+        cumulative.forEach { times.add(atMillis - elapsed + it) }
+        return true
+    }
+
     companion object {
 
         const val HEADER = "source\tat\tpad\ttarget\tkeys\tmillis"
