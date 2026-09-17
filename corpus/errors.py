@@ -223,6 +223,20 @@ def report(rows: list[dict]) -> None:
               f" longest {ordered[-1]} ms")
 
 
+def summarise(rows: list[dict]) -> tuple[int, int, int]:
+    """Keys, wrong presses and clean phrases, for a one-line comparison between sources."""
+    keys = errors = clean = 0
+    for row in rows:
+        reference = sequence_of(row["target"])
+        if reference is None:
+            continue
+        keys += len(reference)
+        wrong = sum(1 for kind, _, _ in align(reference, row["keys"]) if kind != "ok")
+        errors += wrong
+        clean += wrong == 0
+    return keys, errors, clean
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record", nargs="?", default="../bench/typing.tsv")
@@ -231,6 +245,21 @@ def main() -> int:
     rows = read(arguments.record)
     if not rows:
         raise SystemExit(f"nothing recorded in {arguments.record}")
+
+    # Split by source before pooling them, because the two kinds of text are typed differently:
+    # a sentence has a rhythm and a drill of unrelated words has none, and if the drill turns out
+    # to be the harder of the two then the weights fitted to it are the wrong weights.
+    sources = sorted({row.get("source", "") for row in rows})
+    if len(sources) > 1:
+        print("by source, before they are pooled:")
+        for source in sources:
+            here = [row for row in rows if row.get("source") == source]
+            keys, errors, clean = summarise(here)
+            print(f"  {source:<16} {len(here):4d} phrases, {keys:6,d} keys,"
+                  f" {100 * errors / max(keys, 1):5.1f}% wrong,"
+                  f" {100 * clean / len(here):4.0f}% of phrases clean")
+        print()
+
     report(rows)
     return 0
 

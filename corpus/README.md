@@ -94,3 +94,32 @@ included, which is what justifies an adjacency-weighted substitution cost. It is
 because the record carries the `pad` column: the same digit sits in a different place depending
 on whether the keypad is being read as itself or as a remote, and without knowing which, the
 geometry is unrecoverable afterwards.
+
+## The drill
+
+`drill.py` writes a text to copy out that exercises the keypad evenly, instead of like poetry.
+
+```bash
+python3 drill.py --language pl --words 2000
+```
+
+Real words from the shipped dictionary, chosen greedily so that every key lands on 12.5% of the
+presses and doubled presses reach 18% of positions. `../bench/drill-pl.txt` is committed, so a
+recording can be compared against the same text later.
+
+**It is stratified sampling, not cheating.** The error model is a set of conditional
+probabilities — given key `8` was wanted, how often was it missed; given a doubled press, how
+often did one go missing. Choosing what to type changes how often each condition arises, not what
+happens once it does. What would be wrong is letting these frequencies into the decoder's own
+scoring, and nothing here touches that.
+
+**What it buys.** Key `8` is 4.6% of Pan Tadeusz and 12.5% here, and the rarest key is what
+decides when the matrix is usable. One pass of the drill is 13,695 presses, 45 minutes at five a
+second, and gives every key 1,461 presses; the same coverage of `8` from verse needs 31,780
+letters, near two hours. Doubled presses, the largest error mode in the record, arrive three
+times as often.
+
+**Type both.** A drill of unrelated words has no rhythm and a sentence does, so the two may not
+be typed the same way. `errors.py` reports them separately before pooling — if the drill turns
+out to be the harder of the two, weights fitted to it are the wrong weights, and the `source`
+column is what makes that visible.
