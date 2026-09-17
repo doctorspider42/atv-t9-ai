@@ -4,11 +4,14 @@ import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
+import io.github.vagrant326.atvt9.BuildConfig
 import io.github.vagrant326.atvt9.core.Candidate
 import io.github.vagrant326.atvt9.core.Composer
 import io.github.vagrant326.atvt9.core.Keypad
@@ -68,7 +71,17 @@ class T9ImeService : InputMethodService() {
      */
     private val clock = Handler(Looper.getMainLooper())
     private val settling = Runnable {
-        composer?.settle()
+        val composer = composer ?: return@Runnable
+        // Timed on the device rather than reasoned about. A decoder fast on a laptop says nothing
+        // about a television: the beam allocates heavily and ART collects differently, and the
+        // only honest number is the one measured where it will run.
+        val started = SystemClock.uptimeMillis()
+        val keys = composer.pressed.length
+        composer.settle()
+        val took = SystemClock.uptimeMillis() - started
+        if (BuildConfig.DEBUG) {
+            Log.i(TAG, "decoded $keys keys in ${took}ms, ${composer.hypotheses.size} readings")
+        }
         setComposing()
         render()
     }
@@ -740,8 +753,17 @@ class T9ImeService : InputMethodService() {
 
     private companion object {
 
-        /** Below the pause between two words, above the gap between two presses. */
-        const val SETTLE_MILLIS = 150L
+        const val TAG = "T9"
+
+        /**
+         * How long the typing has to stop before it is worth reading.
+         *
+         * Above the gap between two presses, which the typing record puts at a median of 195 ms,
+         * so a run of presses costs one decode at the end of it rather than one per press. At 150
+         * it fired between the presses of anybody typing at the speed this keyboard is for, which
+         * is the speed that made it feel slow.
+         */
+        const val SETTLE_MILLIS = 300L
         /** What a TV query actually contains. Not a general punctuation set, and not meant as one. */
         const val PUNCTUATION = ".,-'&:/"
 
