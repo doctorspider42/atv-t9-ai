@@ -57,6 +57,16 @@ class BeamDecoder(
      * dictionaries: the same prefix asked about in two queries has the same answer, and on a
      * television the second answer should not cost a binary search through a file to find out.
      */
+    /**
+     * Whether any language here has something to say about word order.
+     *
+     * When none has, two readings that differ only in a word already finished are worth the same
+     * from here on and may be merged — which is the beam's width back. When one has, they are not,
+     * and merging them would decide the question before the evidence arrives. That state is what
+     * the model costs before it says anything at all.
+     */
+    private val contextless: Boolean = sources.all { it.model.isEmpty }
+
     private val live = HashMap<String, Boolean>()
     private val readings = HashMap<String, List<Reading>>()
 
@@ -76,7 +86,11 @@ class BeamDecoder(
             shared++
         }
         if (levels.isEmpty()) {
-            levels.add(HashMap<Key, State>().also { it[Key("", null)] = State("", emptyList(), 0.0, null, 0) })
+            levels.add(
+                HashMap<Key, State>().also {
+                    it[Key("", null, null)] = State("", emptyList(), 0.0, null, 0)
+                }
+            )
         }
         while (levels.size > shared + 1) {
             levels.removeAt(levels.size - 1)
@@ -243,12 +257,13 @@ class BeamDecoder(
     }
 
     private fun readingsOf(prefix: String): List<Reading> = readings.getOrPut(prefix) {
-        sources.mapNotNull { source ->
+        sources.mapIndexedNotNull { index, source ->
             val exact = source.dictionary.candidates(prefix, ALTERNATIVES)
                 .filter(Candidate::exact)
                 .takeIf { it.isNotEmpty() }
-                ?: return@mapNotNull null
+                ?: return@mapIndexedNotNull null
             Reading(
+                source = index,
                 word = exact.first().word,
                 language = source.language,
                 frequency = logProbabilityOf(exact.first().score),
@@ -259,7 +274,11 @@ class BeamDecoder(
     }
 
     private fun MutableMap<Key, State>.offer(state: State) {
-        val key = Key(state.prefix, state.language)
+        val key = Key(
+            state.prefix,
+            state.language,
+            if (contextless) null else state.words.lastOrNull()?.text,
+        )
         val existing = this[key]
         if (existing == null || state.score > existing.score) {
             this[key] = state
@@ -277,7 +296,16 @@ class BeamDecoder(
      */
     private fun logProbabilityOf(score: Int): Double = (score - 255) * (LOG_SPAN / 254.0)
 
-    private data class Key(val prefix: String, val language: String?)
+    /**
+     * What makes two partial readings the same, and therefore mergeable.
+     *
+     * [previous] is in here because of the language model and only because of it: without one,
+     * two readings of the same presses that differ only in a word already finished are worth the
+     * same from here on, and keeping both wastes the beam. With one they are not — the next word
+     * costs something different after each — so merging them would decide the question before the
+     * evidence arrives. It is the price the model charges before it says anything.
+     */
+    private data class Key(val prefix: String, val language: String?, val previous: String?)
 
     /**
      * [mistakes] is the part of [score] that came from the presses being wrong, kept apart so the
@@ -294,6 +322,7 @@ class BeamDecoder(
     )
 
     private data class Reading(
+        val source: Int,
         val word: String,
         val language: String?,
         val frequency: Double,

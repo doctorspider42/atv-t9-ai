@@ -2,6 +2,8 @@ package io.github.vagrant326.atvt9.core.bench
 
 import io.github.vagrant326.atvt9.core.Dictionary
 import io.github.vagrant326.atvt9.core.decode.BeamDecoder
+import io.github.vagrant326.atvt9.core.decode.Bigrams
+import io.github.vagrant326.atvt9.core.decode.LanguageModel
 import io.github.vagrant326.atvt9.core.decode.Source
 import io.github.vagrant326.atvt9.core.decode.Weights
 import java.io.File
@@ -37,6 +39,20 @@ fun main(arguments: Array<String>) {
             ?.inputStream()
             ?.use { Dictionary.read(it) }
     }
+    // The pairs are optional and their absence is the interesting comparison: the same benchmark
+    // run with and without them is what says whether they were worth building.
+    val models = listOf("pl", "en").associateWith { language ->
+        val file = File(options["--bigrams-$language"] ?: "app/src/main/assets/bigrams-$language.bin")
+        if (file.exists() && "--no-bigrams" !in options) {
+            file.inputStream().use { Bigrams.read(it) }
+        } else {
+            LanguageModel.NONE
+        }
+    }
+    for ((language, model) in models) {
+        System.err.println("$language: " + if (model.isEmpty) "no word pairs" else "word pairs loaded")
+    }
+
     val polish = dictionaries["pl"] ?: run {
         System.err.println("no Polish dictionary — run corpus/build.py")
         return
@@ -54,11 +70,11 @@ fun main(arguments: Array<String>) {
     // and the only honest place to see it is on real input. The prior is what the user's own
     // committed words would set; 4:1 is a stand-in until there are enough of them to count.
     val configurations = listOfNotNull(
-        "pl" to listOf(Source("pl", polish, prior = 1.0)),
+        "pl" to listOf(Source("pl", polish, prior = 1.0, model = models.getValue("pl"))),
         dictionaries["en"]?.let { english ->
             "pl + en" to listOf(
-                Source("pl", polish, prior = 0.8),
-                Source("en", english, prior = 0.2),
+                Source("pl", polish, prior = 0.8, model = models.getValue("pl")),
+                Source("en", english, prior = 0.2, model = models.getValue("en")),
             )
         },
     )

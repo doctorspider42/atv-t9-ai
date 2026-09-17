@@ -58,6 +58,15 @@ data class Source(
     val language: String,
     val dictionary: Dictionary,
     val prior: Double,
+    /**
+     * What this language says about which word follows which.
+     *
+     * Per language rather than one for the query, because a pair is a fact about a language and a
+     * query may change language halfway: `piątek the series` should have its Polish pair scored
+     * against Polish and its English one against English, and a single table would have to have
+     * been built from a corpus that is neither.
+     */
+    val model: LanguageModel = LanguageModel.NONE,
 )
 
 /**

@@ -118,6 +118,114 @@ def count_words(language: str, raw: str, title_weight: int) -> Counter:
     return counts
 
 
+def count_pairs(language: str, raw: str, title_weight: int, vocabulary: set[str]) -> Counter:
+    """Counts adjacent word pairs, over the words that made it into the dictionary.
+
+    Word order is the whole point and the first version of this pipeline threw it away: a
+    `Counter` over tokens says how common a word is and nothing about what follows what. But `z`
+    and `w` are the same key, and so are `bo` and `co`, and `opisuje` and `opisuję` — for a given
+    sequence the commoner one wins every time and for ever, whatever the rest of the sentence
+    says. Only the word before can separate them.
+
+    Pairs are counted only between words the dictionary holds. A pair whose second word cannot be
+    offered is a pair the decoder can never use, and counting it would spend the table's budget on
+    entries that are unreachable by construction.
+
+    A line break ends a pair. Subtitle lines are speech turns as often as they are sentences, and
+    joining across them would teach the model that the last word of one utterance predicts the
+    first of the next.
+    """
+    sources = sorted(
+        os.path.join(raw, name)
+        for name in os.listdir(raw)
+        if name.endswith(f"-{language}.txt")
+    )
+
+    pairs = Counter()
+    for path in sources:
+        weight = title_weight if os.path.basename(path).startswith("titles-") else 1
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                previous = None
+                for token in line.split():
+                    if token not in vocabulary:
+                        previous = None
+                        continue
+                    if previous is not None:
+                        pairs[(previous, token)] += weight
+                    previous = token
+
+    print(f"{language}: {len(pairs):,} distinct pairs", file=sys.stderr)
+    return pairs
+
+
+def write_bigrams(language: str, pairs: Counter, keep: int, floor: int, out: str) -> None:
+    """Writes the pairs worth keeping, as hashes rather than words.
+
+    Two words cost several times what a hash of them costs, and the words are already in the
+    dictionary: the table only has to answer "how likely is this pair", never "which pair is
+    this". Sixty-four bits over a few hundred thousand entries collides a handful of times in the
+    whole table, and the cost of one collision is that a word looks likelier after something than
+    it is - a wrong ranking in a rare place, against a file several times smaller everywhere.
+
+    Kept in hash order so the reader can binary search it without building anything at load.
+
+    Format, big-endian:
+
+        magic     4 bytes  "T9B1"
+        version   u8       1
+        span      u16      the log range the score byte was scaled into, times 100
+        count     u32
+        pairs     count x (u64 hash, u8 score)   ascending by hash
+    """
+    chosen = [pair for pair in pairs.most_common() if pair[1] >= floor][:keep]
+    if not chosen:
+        raise SystemExit("no pairs survived the floor: is the corpus large enough?")
+
+    highest = chosen[0][1]
+    lowest = chosen[-1][1]
+    # The score byte is the log-probability of the pair, scaled so the rarest kept pair is 1 and
+    # the commonest is 255. The span travels in the file because the reader needs it to get back
+    # to nats, and it depends on the corpus rather than on the format.
+    span = math.log(highest) - math.log(lowest) or 1.0
+
+    table = []
+    for (previous, word), count in chosen:
+        step = 1 + int(254 * (math.log(count) - math.log(lowest)) / span)
+        # Sorted as the reader compares them, which is signed: Kotlin has no unsigned long in its
+        # arrays, so a hash with the top bit set is a negative number there and belongs first. Get
+        # this wrong and the binary search quietly misses half the table.
+        table.append((signed(fnv1a(f"{previous} {word}")), max(1, min(255, step))))
+    table.sort()
+
+    os.makedirs(out, exist_ok=True)
+    target = os.path.join(out, f"bigrams-{language}.bin")
+    with open(target, "wb") as handle:
+        handle.write(b"T9B1")
+        handle.write(struct.pack(">BHI", 1, min(65535, int(span * 100)), len(table)))
+        for value, step in table:
+            handle.write(struct.pack(">QB", value & 0xFFFFFFFFFFFFFFFF, step))
+
+    size = os.path.getsize(target)
+    print(
+        f"  {os.path.basename(target)}  {size:,} bytes"
+        f"  ({len(table):,} pairs, kept down to {lowest} occurrences)",
+        file=sys.stderr,
+    )
+
+
+def signed(value: int) -> int:
+    return value - (1 << 64) if value >= (1 << 63) else value
+
+
+def fnv1a(text: str) -> int:
+    """The same hash `Bigrams.hash` computes, and the two have to agree character for character."""
+    value = 0xCBF29CE484222325
+    for character in text:
+        value = ((value ^ ord(character)) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
 def order(counts: Counter, limit: int) -> list[tuple[str, int]]:
     """Top words by count, then sorted by key sequence with the commonest first inside each.
 
@@ -235,6 +343,18 @@ def main() -> int:
         default=20,
         help="how many times title text counts, to set the domain mix deliberately",
     )
+    parser.add_argument(
+        "--pairs",
+        type=int,
+        default=400_000,
+        help="how many word pairs to keep, commonest first; 0 writes no table at all",
+    )
+    parser.add_argument(
+        "--pair-floor",
+        type=int,
+        default=3,
+        help="how often a pair must occur to be worth keeping",
+    )
     arguments = parser.parse_args()
 
     counts = count_words(arguments.language, arguments.raw, arguments.title_weight)
@@ -243,6 +363,15 @@ def main() -> int:
         raise SystemExit("no words survived: check the raw text")
     report(words)
     write(arguments.language, words, arguments.out)
+
+    if arguments.pairs > 0:
+        vocabulary = {word for word, _ in words}
+        pairs = count_pairs(
+            arguments.language, arguments.raw, arguments.title_weight, vocabulary
+        )
+        write_bigrams(
+            arguments.language, pairs, arguments.pairs, arguments.pair_floor, arguments.out
+        )
     return 0
 
 

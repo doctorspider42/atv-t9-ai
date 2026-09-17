@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.annotation.StringRes
 import io.github.vagrant326.atvt9.R
 import io.github.vagrant326.atvt9.core.Dictionary
+import io.github.vagrant326.atvt9.core.decode.Bigrams
+import io.github.vagrant326.atvt9.core.decode.LanguageModel
 import io.github.vagrant326.atvt9.core.UserDictionary
 import java.io.File
 
@@ -39,6 +41,7 @@ enum class Language(
 class DictionaryRepository(private val context: Context) {
 
     private val loaded = HashMap<Language, Dictionary?>()
+    private val models = HashMap<Language, LanguageModel>()
 
     fun dictionaryFor(language: Language): Dictionary? = loaded.getOrPut(language) {
         val name = "dictionary-${language.code}.bin"
@@ -47,6 +50,23 @@ class DictionaryRepository(private val context: Context) {
         }.getOrElse { failure ->
             Log.w(TAG, "no usable dictionary in $name, spelling only", failure)
             null
+        }
+    }
+
+    /**
+     * What this language knows about which word follows which, or nothing when it has no table.
+     *
+     * Absent is an ordinary state rather than a failure: a language ships a dictionary before it
+     * ships pairs, and the decoder is written to work without one — it simply cannot then tell
+     * `z` from `w`, which are the same key and differ only by what came before them.
+     */
+    fun modelFor(language: Language): LanguageModel = models.getOrPut(language) {
+        val name = "bigrams-${language.code}.bin"
+        runCatching {
+            context.assets.open(name).use { Bigrams.read(it) }
+        }.getOrElse { failure ->
+            Log.i(TAG, "no word pairs in $name, frequency only", failure)
+            LanguageModel.NONE
         }
     }
 

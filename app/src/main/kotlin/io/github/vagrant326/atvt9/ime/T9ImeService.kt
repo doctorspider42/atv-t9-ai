@@ -568,6 +568,7 @@ class T9ImeService : InputMethodService() {
                     language = language.code,
                     dictionary = it,
                     prior = if (language == preferences.activeLanguage) 0.8 else 0.2,
+                    model = dictionaries.modelFor(language),
                 )
             }
         }
