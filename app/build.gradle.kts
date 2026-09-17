@@ -101,15 +101,20 @@ dependencies {
 }
 
 /**
- * The television, on this machine: boot the emulator, install the dev build, make it the keyboard.
+ * A device on this machine: boot the emulator, install the dev build, make it the keyboard.
  *
- *     ./gradlew :app:tv
+ *     ./gradlew :app:tv                    the television
+ *     ./gradlew :app:tv -Pavd=mobile     a phone, where a finger can use the grid
  *
- * Worth a task rather than a line in the README because every step of it is a thing somebody gets
- * wrong once and then loses twenty minutes to. The keyboard is deaf while hidden — by design,
- * since consuming the d-pad while hidden once left a television unnavigable — so an emulator
- * driven from a desk keyboard sees nothing at all until `show_ime_with_hard_keyboard` is set, and
- * there is nothing on screen to suggest that is why.
+ * Worth a task rather than a line in the README because every step is a thing somebody gets wrong
+ * once and then loses twenty minutes to. The keyboard is deaf while hidden — by design, since
+ * consuming the d-pad while hidden once left a television unnavigable — so an emulator driven
+ * from a desk keyboard sees nothing at all until `show_ime_with_hard_keyboard` is set, and there
+ * is nothing on screen to suggest that is why.
+ *
+ * Both kinds are worth having open. A television takes no touch at all, which is the point of it:
+ * the grid is a label there and the number keys are the only way in. A phone takes a finger, so
+ * the same grid is a keyboard and the decoder can be tried without a hardware keypad at all.
  *
  * It will not create the virtual device or download a system image. Both are large, slow and the
  * user's to decide on; the task says what to run and stops.
@@ -122,17 +127,21 @@ val exeSuffix: String = if (System.getProperty("os.name").startsWith("Windows"))
 val adbPath: String = File(android.sdkDirectory, "platform-tools/adb$exeSuffix").path
 val emulatorPath: String = File(android.sdkDirectory, "emulator/emulator$exeSuffix").path
 val imeService = "io.github.vagrant326.atvt9.dev/io.github.vagrant326.atvt9.ime.T9ImeService"
+val devApk: File = File(layout.buildDirectory.get().asFile, "outputs/apk/dev/debug/app-dev-debug.apk")
 
 /**
- * Boots the emulator if nothing is attached, and waits for it rather than for a fixed time.
+ * Boots [avdName] unless it is already running, and waits for the boot rather than for a fixed
+ * time.
  *
- * A device already attached is left alone: it may be the television itself over `adb connect`,
- * and starting an emulator over the top of a real one is the mistake that wastes a whole session,
- * because everything afterwards silently goes to the wrong device.
+ * "Already running" is checked per virtual device rather than per anything attached, because two
+ * are worth having open at once and asking for the phone while the television is up must start
+ * the phone. A device that is not an emulator — the real television over `adb connect` — is left
+ * alone whatever is asked for: starting an emulator over the top of a real one is the mistake
+ * that wastes a whole session, since everything afterwards silently goes to the wrong device.
  */
 tasks.register("bootTv") {
     group = "verification"
-    description = "Starts the Android TV emulator and waits for it to finish booting"
+    description = "Starts the emulator named by -Pavd (default atv) and waits for it to boot"
     val avd = avdName
     val adb = adbPath
     val emulator = emulatorPath
@@ -146,8 +155,21 @@ tasks.register("bootTv") {
             return output.trim()
         }
 
-        if (run(adb, "devices").lines().any { it.endsWith("device") }) {
-            logger.lifecycle("a device is already attached, leaving it alone")
+        fun attached(): List<String> = run(adb, "devices")
+            .lines()
+            .drop(1)
+            .filter { it.endsWith("device") }
+            .map { it.substringBefore('	').trim() }
+
+        fun avdOf(serial: String): String =
+            if (serial.startsWith("emulator-")) {
+                run(adb, "-s", serial, "emu", "avd", "name").lines().firstOrNull()?.trim().orEmpty()
+            } else {
+                serial
+            }
+
+        if (attached().any { avdOf(it) == avd || !it.startsWith("emulator-") }) {
+            logger.lifecycle("$avd is already attached, leaving it alone")
             return@doLast
         }
 
@@ -155,12 +177,12 @@ tasks.register("bootTv") {
         if (avd !in known) {
             error(
                 """
-                no virtual device called `$avd`. To make one (about 1 GB, once):
+                no virtual device called `$avd`. To make a television (about 1 GB, once):
 
                   sdkmanager --install "system-images;android-36;android-tv;x86_64"
-                  avdmanager create avd -n $avd -k "system-images;android-36;android-tv;x86_64" -d tv_1080p
+                  avdmanager create avd -n atv -k "system-images;android-36;android-tv;x86_64" -d tv_1080p
 
-                Or point this at another with -Pavd=<name>. Known: ${known.joinToString()}
+                Known here: ${known.joinToString()}
                 """.trimIndent()
             )
         }
@@ -171,9 +193,14 @@ tasks.register("bootTv") {
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
 
-        run(adb, "wait-for-device")
         val deadline = System.currentTimeMillis() + 5 * 60 * 1000
-        while (run(adb, "shell", "getprop", "sys.boot_completed") != "1") {
+        while (true) {
+            val serial = attached().firstOrNull { avdOf(it) == avd }
+            if (serial != null &&
+                run(adb, "-s", serial, "shell", "getprop", "sys.boot_completed") == "1"
+            ) {
+                break
+            }
             if (System.currentTimeMillis() > deadline) {
                 error("$avd did not finish booting in five minutes")
             }
@@ -183,12 +210,21 @@ tasks.register("bootTv") {
     }
 }
 
+/**
+ * Installs onto the device that was asked for, by serial.
+ *
+ * AGP's own install task would do this, and cannot be told which device to use when two are
+ * attached — which is the normal state here, a television for the layout and a phone for the
+ * touch. So the APK goes over with `adb -s` instead, and the build task only has to build it.
+ */
 tasks.register("tv") {
     group = "verification"
-    description = "Boots the emulator, installs the dev build and selects it as the keyboard"
-    dependsOn("bootTv", "installDevDebug")
+    description = "Boots the device, installs the dev build and selects it as the keyboard"
+    dependsOn("bootTv", "assembleDevDebug")
+    val avd = avdName
     val adb = adbPath
     val service = imeService
+    val apk = devApk
     doLast {
         fun run(vararg arguments: String): String {
             val process = ProcessBuilder(listOf(adb) + arguments)
@@ -199,13 +235,25 @@ tasks.register("tv") {
             return output.trim()
         }
 
-        run("shell", "ime", "enable", service)
-        run("shell", "ime", "set", service)
+        val devices = run("devices")
+            .lines()
+            .drop(1)
+            .filter { it.endsWith("device") }
+            .map { it.substringBefore('	').trim() }
+        val serial = devices.firstOrNull { serial ->
+            serial.startsWith("emulator-") &&
+                run("-s", serial, "emu", "avd", "name").lines().firstOrNull()?.trim() == avd
+        } ?: devices.singleOrNull()
+        ?: error("no device for `$avd`, and ${devices.size} others attached: ${devices.joinToString()}")
+
+        logger.lifecycle(run("-s", serial, "install", "-r", apk.path).lines().last())
+        run("-s", serial, "shell", "ime", "enable", service)
+        run("-s", serial, "shell", "ime", "set", service)
         // Android hides every soft keyboard while a hardware one is attached, and an emulator
         // always has one. Without this the keyboard is installed, selected, and completely deaf.
-        run("shell", "settings", "put", "secure", "show_ime_with_hard_keyboard", "1")
-        logger.lifecycle("keyboard ready on " + run("shell", "getprop", "ro.product.model"))
+        run("-s", serial, "shell", "settings", "put", "secure", "show_ime_with_hard_keyboard", "1")
+        logger.lifecycle(
+            "keyboard ready on $serial, " + run("-s", serial, "shell", "getprop", "ro.product.model")
+        )
     }
 }
-
-tasks.matching { it.name == "installDevDebug" }.configureEach { mustRunAfter("bootTv") }

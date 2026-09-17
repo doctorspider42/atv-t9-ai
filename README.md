@@ -52,17 +52,31 @@ strip that has room for four words:
 ./gradlew :core:harness
 ```
 
-**On a television that is not one**, which is an Android TV emulator. The task boots it, installs
-the dev build and makes it the keyboard:
+**On an emulator.** The task boots the device, installs the dev build and makes it the keyboard:
 
 ```bash
 ./gradlew :app:tv
 ```
 
-It leaves an already attached device alone, so the same task installs onto the real television
-over `adb connect`. It will not download a system image or create the virtual device — both are
-large and slow and yours to decide on — and says what to run if the device is missing. Point it at
-another with `-Pavd=<name>`.
+```bash
+./gradlew :app:tv -Pavd=mobile
+```
+
+`-Pavd` is the name of a virtual device on the machine, so the second line assumes a phone called
+`mobile`; use whatever yours is called.
+
+The first is the television, the second a phone, and both are worth having open. A television
+takes no touch at all, which is the point of it: the key grid is a label there and the number keys
+are the only way in. A phone takes a finger, so the same grid is a keyboard and the decoder can be
+tried without a hardware keypad at all — but nothing about how it feels on a television can be
+learnt from one.
+
+Each installs by serial onto the device that was asked for, so having both up at once is
+ordinary rather than a trap. A real device attached over `adb connect` is left alone and installed
+onto whatever was asked for, because starting an emulator over the top of a real television is the
+mistake that wastes a whole session. It will not download a system image or create the virtual
+device — both are large and slow and yours to decide on — and says what to run when one is
+missing.
 
 One thing it does that nobody guesses: `show_ime_with_hard_keyboard`. Android hides every soft
 keyboard while a hardware one is attached and an emulator always has one, so without it the
