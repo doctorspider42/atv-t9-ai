@@ -10,9 +10,9 @@ Third application in the programme, after
 no shared code: each one is a whole input method rather than a variation on one, and the part
 they would share is the part that differs.
 
-**To install it:** AFTVnews Downloader code **9874066**. That is the dev channel, which is all
-there is so far — there is no production release yet. Seven digits on the remote beats typing a
-URL with a grid keyboard, which is the problem this project exists to solve.
+**To install it:** AFTVnews Downloader code **8238137**. That is the dev channel of this fork,
+which is all there is here — there is no production release. Seven digits on the remote beats
+typing a URL with a grid keyboard, which is the problem this project exists to solve.
 [Details and the direct link below.](#installing)
 
 ---
@@ -147,18 +147,18 @@ socket this app owns.
 
 ## Installing
 
-In the AFTVnews Downloader app, enter code **9874066**. Seven digits on the remote beats entering
+In the AFTVnews Downloader app, enter code **8238137**. Seven digits on the remote beats entering
 a URL with a grid keyboard, which is the problem this project exists to solve.
 
-That code is the **dev channel**, and at the moment it is the whole list: this keyboard has no
-production release yet, so there is nothing for a production code to resolve to. When the first
-one lands it gets its own code, and it installs *alongside* this build rather than over it — the
-two are separate applications.
+That code is this fork's **dev channel**, and it is the whole list: there is no production release
+here. The upstream project has its own code, **9874066**, which resolves to *its* builds — the two
+are the same application by applicationId and differ by signing key, so one has to be uninstalled
+before the other will install.
 
 The address works directly as well. It is permanent and always serves the newest build:
 
 ```
-https://github.com/vagrant326/atv-t9/releases/download/latest-dev/atv-t9-dev.apk
+https://github.com/doctorspider42/atv-t9-ai/releases/download/latest-dev/atv-t9-dev.apk
 ```
 
 Dev builds are published as prereleases, so they never show up as "Latest" on the releases page —
