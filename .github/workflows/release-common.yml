@@ -115,9 +115,12 @@ jobs:
           # printed, and that turns "no key with alias X" into an answer.
           if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" \
               -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
-            echo "::error::No key called '$KEY_ALIAS' in this keystore. Set the KEY_ALIAS secret to one of the names below."
+            echo "::error::No key called '$KEY_ALIAS' in this keystore. Set the KEY_ALIAS secret to one of the names it does hold, listed below."
+            # `-list` alone prints one line per entry starting with the alias; `Alias name:` is a
+            # `-v` heading and grepping for it against the short form finds nothing at all, which
+            # is how the first version of this check failed silently and printed no names.
             keytool -list -keystore "$RUNNER_TEMP/release.jks" \
-              -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | grep -i "alias name" || true
+              -storepass "$KEYSTORE_PASSWORD" 2>&1 | sed -n '/entr/,$p' || true
             exit 1
           fi
 
