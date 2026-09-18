@@ -85,6 +85,14 @@ class T9ImeService : InputMethodService() {
             currentInputConnection?.finishComposingText()
         }
 
+        override fun abandonComposing() {
+            val connection = currentInputConnection ?: return
+            // Emptying the region first is what actually removes the text; finishing alone only
+            // stops it being provisional and leaves every letter of it in the field.
+            connection.setComposingText("", 1)
+            connection.finishComposingText()
+        }
+
         override fun deleteBefore(count: Int) {
             currentInputConnection?.deleteSurroundingText(count, 0)
         }
@@ -186,6 +194,60 @@ class T9ImeService : InputMethodService() {
         dictionaries = DictionaryRepository(this)
         userWords = UserWords.of(this)
         engine = T9Engine(null, userWords.dictionary)
+        warm()
+    }
+
+    /**
+     * Reads a query nobody typed, so that the first one somebody does type is not the slow one.
+     *
+     * Measured on the television: the first press of a fresh keyboard cost 141-338ms and the
+     * fourth cost 18ms. Almost none of that difference is the search — it is the dictionary being
+     * read off the flash, the classes being loaded, and ART compiling a path it has never run.
+     * All of it is work that can be done before anybody is waiting, and all of it is work that
+     * only pays off if it happens on the thread that will do the real decoding, which is why it
+     * goes through the same single-thread executor rather than a scratch thread.
+     *
+     * At service creation rather than when a field opens, because a keyboard is created once and
+     * then answers many fields — and because the load used to happen on the main thread while the
+     * user was already looking at the box they wanted to type in.
+     */
+    private fun warm() {
+        val languages = preferences.enabledLanguages
+        decoding.execute {
+            val started = SystemClock.uptimeMillis()
+            val sources = languages.mapNotNull { language ->
+                dictionaries.dictionaryFor(language)?.let {
+                    Source(language.code, it, prior = 1.0, model = dictionaries.modelFor(language))
+                }
+            }
+            if (sources.isEmpty()) {
+                return@execute
+            }
+            // Two presses rather than one: the first level of the search and the level that
+            // extends it are different code, and the extension is the one every later press uses.
+            BeamDecoder(sources).decode(WARM_KEYS, 1)
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "warmed in ${SystemClock.uptimeMillis() - started}ms")
+            }
+        }
+    }
+
+    /**
+     * The same, for the decoder a field is about to be typed into.
+     *
+     * Warming the classes once at creation left the first press at 279ms against 338 cold, which
+     * says most of what it costs is not the classes: it is this decoder's own first level, built
+     * from nothing over every source it has. That work is the same whichever key starts it, so it
+     * can be done while the user is still looking at the field.
+     */
+    private fun warm(decoder: BeamDecoder) {
+        decoding.execute {
+            val started = SystemClock.uptimeMillis()
+            decoder.decode(WARM_KEYS, 1)
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "warmed this field's decoder in ${SystemClock.uptimeMillis() - started}ms")
+            }
+        }
     }
 
     /**
@@ -244,6 +306,9 @@ class T9ImeService : InputMethodService() {
 
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
         super.onStartInput(info, restarting)
+        if (BuildConfig.DEBUG) {
+            Log.i(TAG, "input started, restarting=$restarting")
+        }
         engine.reset()
         engine.dictionary = dictionaries.dictionaryFor(preferences.activeLanguage)
         mayLearn = preferences.isLearning && isLearnable(info)
@@ -660,6 +725,7 @@ class T9ImeService : InputMethodService() {
         }
         val built = BeamDecoder(sources)
         decoder = built
+        warm(built)
         val composing = SentenceComposer(built, READINGS)
         typing = SentenceTyping(
             composer = composing,
@@ -859,6 +925,9 @@ class T9ImeService : InputMethodService() {
          * is the speed that made it feel slow.
          */
         const val SETTLE_MILLIS = 300L
+
+        /** The query the keyboard reads to itself before anybody types one. See [warm]. */
+        const val WARM_KEYS = "26"
 
         /** How long a commit may wait for a reading before going ahead without one. */
         const val SETTLE_LIMIT = 2L

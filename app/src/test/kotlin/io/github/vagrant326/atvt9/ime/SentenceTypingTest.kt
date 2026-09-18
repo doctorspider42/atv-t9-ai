@@ -35,7 +35,20 @@ class SentenceTypingTest {
             composing = text
         }
 
+        /**
+         * Keeps the text, the way `finishComposingText` does.
+         *
+         * This fake used to throw it away, and that one line is why the television typed `a2`
+         * while the test for holding `2` passed: Android's call stops the text being provisional,
+         * it does not remove it. A fake that is kinder than the system it stands for tests
+         * nothing.
+         */
         override fun finishComposing() {
+            committed.append(composing)
+            composing = ""
+        }
+
+        override fun abandonComposing() {
             composing = ""
         }
 
@@ -142,6 +155,50 @@ class SentenceTypingTest {
         assertEquals("word 568 ", field.toString())
         assertFalse(typing.isComposing)
         assertEquals(listOf("word", "568"), learnt)
+    }
+
+    @Test
+    fun `the 0 key says nothing on the way down, and settles a segment on the way up`() {
+        // How the key actually arrives on a television: `0` means two things, so the service
+        // defers it and asks again on release. Handled as "anything else" it committed the whole
+        // query on the way down — the words still reached the field, so it read as working, and
+        // what was quietly lost was the segment the space is supposed to settle.
+        type('5', '6', '8')
+        assertFalse(typing.press(Action.DeferToRelease(7)))
+        assertTrue(typing.isComposing)
+
+        typing.press(Action.Space)
+        composer.settle()
+        typing.showComposing()
+        assertEquals("word 568 ", field.toString())
+
+        // And the segment is still there to be put back in the air, which is the whole point.
+        typing.press(Action.Delete)
+        composer.settle()
+        typing.showComposing()
+        assertEquals("word 568", field.toString())
+        assertTrue(typing.isComposing)
+    }
+
+    @Test
+    fun `a key held past its first repeat does not end the query`() {
+        type('5', '6', '8')
+
+        assertFalse(typing.press(Action.Ignore))
+        assertTrue(typing.isComposing)
+        assertEquals("word 568", field.toString())
+    }
+
+    @Test
+    fun `abandoning a word takes it out of the field`() {
+        // `finishComposingText` keeps what it is shown, so every one of these used to leave the
+        // word behind in the field it was supposed to be abandoning.
+        type('5', '6', '8')
+        typing.press(Action.Back)
+        typing.showComposing()
+
+        assertEquals("", field.toString())
+        assertFalse(typing.isComposing)
     }
 
     @Test

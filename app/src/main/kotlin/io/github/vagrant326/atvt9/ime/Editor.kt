@@ -23,8 +23,23 @@ interface Editor {
     /** Shows text inline as still being chosen, replacing whatever was shown before. */
     fun compose(text: String)
 
-    /** Settles whatever was being shown inline, leaving it in the field. */
+    /** Settles whatever was being shown inline, **leaving it in the field**. */
     fun finishComposing()
+
+    /**
+     * Takes back whatever was being shown inline, leaving nothing of it behind.
+     *
+     * The distinction from [finishComposing] is the whole reason this method exists, and it cost
+     * a bug on the television to learn: `finishComposingText` does not erase the composing text,
+     * it *keeps* it and stops calling it provisional. So a hold on `2` — which takes back the
+     * press underneath it and then has nothing left to show — settled the `a` into the field and
+     * typed `a2`. The fake editor in the tests threw the text away instead, which is why the test
+     * for exactly that case passed while the television did not.
+     *
+     * Everything that abandons a word rather than accepting it comes here: the hold, `BACK`, and
+     * a held delete over a word still in the air.
+     */
+    fun abandonComposing()
 
     /** Removes [count] characters before the cursor. */
     fun deleteBefore(count: Int)

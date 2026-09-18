@@ -43,6 +43,16 @@ class DictionaryRepository(private val context: Context) {
     private val loaded = HashMap<Language, Dictionary?>()
     private val models = HashMap<Language, LanguageModel>()
 
+    /**
+     * Synchronised because two threads ask for the same dictionary and one of them is warming it.
+     *
+     * The keyboard reads a query to itself on its decoding thread before the user opens a field,
+     * and then opens the field on the main thread; without the lock they can both decide the
+     * dictionary is missing and both read it off the flash, which is the one piece of work this
+     * whole arrangement exists to do exactly once. A lock held across the read is what makes the
+     * second caller wait for the first rather than repeat it.
+     */
+    @Synchronized
     fun dictionaryFor(language: Language): Dictionary? = loaded.getOrPut(language) {
         val name = "dictionary-${language.code}.bin"
         runCatching {
@@ -60,6 +70,7 @@ class DictionaryRepository(private val context: Context) {
      * ships pairs, and the decoder is written to work without one — it simply cannot then tell
      * `z` from `w`, which are the same key and differ only by what came before them.
      */
+    @Synchronized
     fun modelFor(language: Language): LanguageModel = models.getOrPut(language) {
         val name = "bigrams-${language.code}.bin"
         runCatching {

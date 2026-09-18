@@ -65,9 +65,27 @@ class SentenceTyping(
 
             is Action.Back -> {
                 composer.clear()
-                editor.finishComposing()
+                editor.abandonComposing()
                 return true
             }
+
+            /**
+             * The press that is not a press yet, and above all not the end of the query.
+             *
+             * `0` says nothing until it is released — held it is the case switch, tapped it is a
+             * space — so the service defers it and asks again on the way up. Falling through to
+             * the catch-all below meant every tap of `0` *committed the whole query on the way
+             * down* and then added a lone space on the way up. The words reached the field, so it
+             * read as working; what was lost was the segment a space is supposed to settle, and
+             * with it the first delete's ability to put that word back in the air. Which is
+             * exactly what the television reported: backspacing to a word ate the space and
+             * offered nothing.
+             */
+            is Action.DeferToRelease -> return false
+
+            // A key held past its first repeat. Committing the query on one would end a sentence
+            // because a thumb rested on a button.
+            is Action.Ignore -> return false
 
             is Action.Commit -> {
                 if (!composer.isComposing) {
@@ -83,7 +101,7 @@ class SentenceTyping(
             is Action.WordDelete -> {
                 if (composer.isComposing) {
                     composer.clear()
-                    editor.finishComposing()
+                    editor.abandonComposing()
                 } else {
                     editor.deleteWord()
                 }
@@ -136,7 +154,10 @@ class SentenceTyping(
         val words = composer.words.map { it.text }
         val reading = composer.commit()
         if (reading.isEmpty()) {
-            editor.finishComposing()
+            // Nothing read, so there is nothing to keep — and what the field is showing inline is
+            // a guess at presses that have just been taken away. Finishing it would settle that
+            // guess, which is how holding `2` came to type `a2`.
+            editor.abandonComposing()
             return
         }
         editor.commit(letterCase.apply(reading))
