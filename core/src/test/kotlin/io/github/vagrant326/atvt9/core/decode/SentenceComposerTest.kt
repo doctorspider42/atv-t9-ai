@@ -2,6 +2,7 @@ package io.github.vagrant326.atvt9.core.decode
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -105,6 +106,38 @@ class SentenceComposerTest {
 
         assertEquals("", empty.takeFinished())
         assertTrue(empty.isComposing)
+    }
+
+    @Test
+    fun `the first delete after a space puts the word back, alternatives and all`() {
+        val composer = composer()
+        composer.press('5')
+        composer.press('6')
+        composer.press('0')
+
+        assertEquals("read 56 ", composer.takeFinished())
+        assertFalse(composer.isComposing)
+
+        // What comes back is what has to leave the field, the trailing space included.
+        assertEquals("read 56 ", composer.reopen())
+        assertTrue(composer.isComposing)
+
+        composer.settle()
+        assertEquals("read 56", composer.text)
+        composer.next(forward = true)
+        assertEquals("also 56", composer.text)
+    }
+
+    @Test
+    fun `there is nothing to reopen mid-word, or twice`() {
+        val composer = composer()
+        composer.press('5')
+        assertNull(composer.reopen()) // a word is in the air; delete means delete
+
+        composer.press('0')
+        composer.takeFinished()
+        assertEquals("read 5 ", composer.reopen())
+        assertNull(composer.reopen()) // one segment deep, and it has been spent
     }
 
     @Test

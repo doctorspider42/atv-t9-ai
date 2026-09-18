@@ -41,6 +41,21 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
      */
     private val finished = StringBuilder()
 
+    /**
+     * The presses and the text of the segment a space last settled, so delete can take it back.
+     *
+     * A word that came out wrong is corrected by retyping it, which on a remote is the whole cost
+     * the decoder exists to avoid — and the reading that was wanted is usually the second one on
+     * the strip. Holding the last segment's presses means the first delete after a space can put
+     * the word back in the air with its alternatives, instead of starting to eat its letters.
+     *
+     * One segment deep, and deliberately: two would need the field's text to be tracked backwards
+     * through everything else that can write to it, and the word just finished is the one being
+     * looked at when the mistake is noticed.
+     */
+    private var settledKeys: String? = null
+    private var settledText: String? = null
+
     /** Whether the presses have moved on since the readings were worked out. */
     var stale: Boolean = false
         private set
@@ -97,10 +112,35 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
             return
         }
         finished.append(reading).append(' ')
+        settledKeys = keys.toString()
+        settledText = "$reading "
         keys.setLength(0)
         readings = emptyList()
         selected = 0
         stale = false
+    }
+
+    /**
+     * Puts the segment a space last settled back in the air, and says what to remove from the
+     * field.
+     *
+     * The caller deletes that many characters and the word returns as a reading with its
+     * alternatives, which is what somebody reaching for delete after seeing the wrong word
+     * actually wants — they are not trying to lose the letters, they are trying to choose again.
+     * Null when there is nothing settled to reopen, and then delete means delete.
+     */
+    fun reopen(): String? {
+        if (keys.isNotEmpty()) {
+            return null
+        }
+        val text = settledText ?: return null
+        keys.append(settledKeys.orEmpty())
+        settledKeys = null
+        settledText = null
+        readings = emptyList()
+        selected = 0
+        stale = true
+        return text
     }
 
     /** Returns false when there was nothing left to take back, so the caller can delete instead. */
@@ -180,6 +220,8 @@ class SentenceComposer(private val decoder: Decoder, private val limit: Int = 5)
     }
 
     fun clear() {
+        settledKeys = null
+        settledText = null
         finished.setLength(0)
         keys.setLength(0)
         readings = emptyList()

@@ -397,7 +397,23 @@ class T9ImeService : InputMethodService() {
             // A held number key, straight into the field. Deterministic like the digit mode and
             // handled the same way: the sentence, or the word, ends first, because a digit is not
             // a letter the decoder could still be reading.
+            //
+            // The short press has to be taken back first. Android announces a hold as a *second*
+            // key-down, so by the time it arrives the plain press has already been dealt with -
+            // which is why holding `2` produced `a2`. Key `0` is the exception and always was: it
+            // is deferred to its release, so there is nothing yet to undo and the release must be
+            // stopped from adding a space afterwards.
             is Action.Number -> {
+                when {
+                    action.digit == '0' -> deferredKey = KeyEvent.KEYCODE_UNKNOWN
+                    action.digit == '1' -> {
+                        currentInputConnection?.deleteSurroundingText(1, 0)
+                        punctuationAt = -1
+                    }
+
+                    composer?.delete() == true -> Unit
+                    else -> engine.backspace()
+                }
                 composer?.let { sendSentence(it) }
                 finishWord(commit = true)
                 currentInputConnection?.commitText(action.digit.toString(), 1)
@@ -621,7 +637,14 @@ class T9ImeService : InputMethodService() {
      * yet, so those fall through and end the sentence first.
      */
     private fun composeSentence(action: Action): Boolean {
-        val composer = composer?.takeIf { !symbols && !digits } ?: return false
+        // Spelling belongs to the word engine and takes the presses with it. Without this the
+        // sentence reader went on swallowing every digit while the strip said "spelling", so the
+        // mode announced itself and then did nothing: `2` twice still read as a word rather than
+        // walking a-b-c. The engine returns to WORD when the spelled word is committed, and the
+        // reader takes over again on its own.
+        val composer = composer?.takeIf {
+            !symbols && !digits && engine.mode != Composer.SPELL
+        } ?: return false
 
         when (action) {
             is Action.Digit -> composer.press(action.digit)
@@ -631,8 +654,16 @@ class T9ImeService : InputMethodService() {
             is Action.Space -> composer.press('0')
 
             is Action.Delete -> if (!composer.delete()) {
-                currentInputConnection?.deleteSurroundingText(1, 0)
-                return true
+                // Nothing in the air, so the first delete reopens the word a space just settled
+                // rather than starting to eat it. Somebody reaching for delete after seeing the
+                // wrong word is not trying to lose the letters - they are trying to choose again,
+                // and the reading they wanted is usually already on the strip.
+                val settled = composer.reopen()
+                if (settled == null) {
+                    currentInputConnection?.deleteSurroundingText(1, 0)
+                    return true
+                }
+                currentInputConnection?.deleteSurroundingText(settled.length, 0)
             }
 
             is Action.Candidate -> {
