@@ -67,9 +67,10 @@ jobs:
   # Every decision underneath is already watched by the JVM tests, so this is one test and stays
   # one test - see `KeyboardSmokeTest`.
   #
-  # A job of its own, with nothing depending on it, because booting an emulator is five minutes
-  # and the tests, lint and the APKs should not wait behind it to say what they know. It is not
-  # allowed to fail quietly either: a smoke test that cannot turn the build red is decoration.
+  # A job of its own, with nothing depending on it, so that the tests, lint and the APKs never
+  # wait behind a device to say what they already know. It is not allowed to fail quietly either:
+  # a smoke test that cannot turn the build red is decoration. Three minutes of a runner end to
+  # end, measured, which is roughly what the job beside it costs and is the whole price of it.
   emulator:
     runs-on: ubuntu-latest
     steps:

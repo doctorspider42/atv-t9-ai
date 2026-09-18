@@ -70,7 +70,12 @@ class KeyboardSmokeTest {
         // resolves to a process other than the one under test — and this one is in the test APK,
         // so it always does. Which is why the field is read through UiAutomator below instead of
         // from the `EditText` itself: there is no reference to it on this side of the fence.
-        instrumentation.context.startActivity(
+        //
+        // Named from the test's own context, because that is the package the activity is in, and
+        // started through the application's, because that is the uid the process runs as. API 30
+        // refuses a start whose calling package does not belong to the calling uid and API 36 does
+        // not, so getting this the wrong way round passes on a new emulator and fails on CI.
+        instrumentation.targetContext.startActivity(
             Intent(instrumentation.context, TypingActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
