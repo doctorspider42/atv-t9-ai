@@ -83,8 +83,24 @@ data class Weights(
      */
     val input: Double = 1.0,
 
-    /** How likely the words are in that order. Carried but unused until the n-grams exist. */
-    val languageModel: Double = 1.0,
+    /**
+     * How likely the words are in that order — and zero, which is a measurement rather than an
+     * omission.
+     *
+     * The pairs are built, loaded and consulted; they are simply worth nothing here. Fitted on
+     * every set available, the best weight is zero on all three: on the recorded typing 61.8% of
+     * words at zero against 61.0% at one and 47.3% at four, and on the real queries no change at
+     * all until it starts doing harm. The pairs it holds do not discriminate the cases that fail —
+     * `z jego` and `w jego` are both ordinary Polish and score within a tenth of a nat of each
+     * other, which is the honest answer and not a tuning problem.
+     *
+     * Two of the three sets could not have shown a gain: a drill of unrelated words has no context
+     * by construction, and Mickiewicz's word order is not subtitle Polish. The third is nineteen
+     * word pairs. So this is "not demonstrable on the data we have" rather than "cannot work", and
+     * what would settle it is recorded typing of real queries — the same thing the space weight is
+     * waiting on.
+     */
+    val languageModel: Double = 0.0,
 
     /**
      * How common the word is on its own, which is all a unigram decoder has.

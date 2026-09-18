@@ -258,7 +258,7 @@ def write_bigrams(
     size = os.path.getsize(target)
     print(
         f"  {os.path.basename(target)}  {size:,} bytes"
-        f"  ({len(table):,} pairs, kept down to {lowest} occurrences)",
+        f"  ({len(table):,} pairs, information from {lowest:.1f} to {highest:.1f} nats)",
         file=sys.stderr,
     )
 
