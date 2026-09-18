@@ -63,6 +63,37 @@ class T9ImeService : InputMethodService() {
      */
     private var composer: SentenceComposer? = null
 
+    /** What the presses mean while a query is in the air. See [SentenceTyping]. */
+    private var typing: SentenceTyping? = null
+
+    /**
+     * The field, for the part of this class that has been lifted out of it.
+     *
+     * Every call goes to the same input connection the rest of this service writes through; the
+     * point is not indirection but that [SentenceTyping] can be handed a different one by a test.
+     */
+    private val editor = object : Editor {
+        override fun commit(text: String) {
+            currentInputConnection?.commitText(text, 1)
+        }
+
+        override fun compose(text: String) {
+            currentInputConnection?.setComposingText(text, 1)
+        }
+
+        override fun finishComposing() {
+            currentInputConnection?.finishComposingText()
+        }
+
+        override fun deleteBefore(count: Int) {
+            currentInputConnection?.deleteSurroundingText(count, 0)
+        }
+
+        override fun deleteWord() {
+            this@T9ImeService.deleteWord()
+        }
+    }
+
     /**
      * The decoder, and the one thread allowed to touch it.
      *
@@ -414,7 +445,7 @@ class T9ImeService : InputMethodService() {
                     composer?.delete() == true -> Unit
                     else -> engine.backspace()
                 }
-                composer?.let { sendSentence(it) }
+                typing?.send()
                 finishWord(commit = true)
                 currentInputConnection?.commitText(action.digit.toString(), 1)
             }
@@ -621,11 +652,24 @@ class T9ImeService : InputMethodService() {
         )
         if (sources.isEmpty()) {
             decoder = null
+            typing = null
             return null
         }
         val built = BeamDecoder(sources)
         decoder = built
-        return SentenceComposer(built, READINGS)
+        val composing = SentenceComposer(built, READINGS)
+        typing = SentenceTyping(
+            composer = composing,
+            editor = editor,
+            spelling = { engine.mode == Composer.SPELL },
+            learn = { words ->
+                if (mayLearn) {
+                    words.forEach { userWords.dictionary.learn(it) }
+                    userWords.flush()
+                }
+            },
+        )
+        return composing
     }
 
     /**
@@ -636,125 +680,30 @@ class T9ImeService : InputMethodService() {
      * a word. Case and spelling are the same — a capital belongs to a word and there is no word
      * yet, so those fall through and end the sentence first.
      */
-    private fun composeSentence(action: Action): Boolean {
-        // Spelling belongs to the word engine and takes the presses with it. Without this the
-        // sentence reader went on swallowing every digit while the strip said "spelling", so the
-        // mode announced itself and then did nothing: `2` twice still read as a word rather than
-        // walking a-b-c. The engine returns to WORD when the spelled word is committed, and the
-        // reader takes over again on its own.
-        val composer = composer?.takeIf {
-            !symbols && !digits && engine.mode != Composer.SPELL
-        } ?: return false
-
-        when (action) {
-            is Action.Digit -> composer.press(action.digit)
-
-            // Skipping the space is forgiven; pressing it is meant. It settles everything before
-            // it, which then belongs to the field and is not revised again.
-            is Action.Space -> composer.press('0')
-
-            is Action.Delete -> if (!composer.delete()) {
-                // Nothing in the air, so the first delete reopens the word a space just settled
-                // rather than starting to eat it. Somebody reaching for delete after seeing the
-                // wrong word is not trying to lose the letters - they are trying to choose again,
-                // and the reading they wanted is usually already on the strip.
-                val settled = composer.reopen()
-                if (settled == null) {
-                    currentInputConnection?.deleteSurroundingText(1, 0)
-                    return true
-                }
-                currentInputConnection?.deleteSurroundingText(settled.length, 0)
-            }
-
-            is Action.Candidate -> {
-                composer.next(forward = action.forward)
-                return true
-            }
-
-            is Action.Back -> {
-                composer.clear()
-                currentInputConnection?.finishComposingText()
-                return true
-            }
-
-            is Action.Commit -> {
-                if (!composer.isComposing) {
-                    return false // nothing pending: the press belongs to the field, as before
-                }
-                sendSentence(composer)
-                return true
-            }
-
-            // Held delete drops the presses still in the air, or, when there are none, the word
-            // behind the cursor. Without this it fell to the branch below and *committed* the
-            // query, which is the opposite of what anybody holding delete is asking for.
-            is Action.WordDelete -> {
-                if (composer.isComposing) {
-                    composer.clear()
-                    currentInputConnection?.finishComposingText()
-                } else {
-                    deleteWord()
-                }
-                return true
-            }
-
-            // Anything else ends the sentence and lets the word keyboard have the press: spelling
-            // a word the dictionaries lack is exactly the escape this needs to leave open.
-            else -> {
-                sendSentence(composer)
-                return false
-            }
-        }
-
-        drain(composer)
-        clock.removeCallbacks(settling)
-        clock.postDelayed(settling, SETTLE_MILLIS)
-        return true
-    }
-
     /**
-     * Moves anything the composition has settled into the field.
+     * The presses while a whole query is in the air, which [SentenceTyping] decides.
      *
-     * Once it is there it is the field's, not the keyboard's: no copy is kept and nothing later
-     * rewrites it. That is the promise a pressed space makes.
+     * Two of them stay here because they are this class's to undo rather than the composition's:
+     * `0` is deferred to its release, so a hold must stop that release from adding a space, and
+     * `1` has already put a mark in the field.
      */
-    private fun drain(composer: SentenceComposer) {
-        val settled = composer.takeFinished()
-        if (settled.isEmpty()) {
-            return
-        }
-        currentInputConnection?.commitText(letterCase.apply(settled), 1)
-        letterCase = letterCase.afterWord()
-        if (mayLearn) {
-            settled.trim().split(' ').filter { it.isNotEmpty() }
-                .forEach { userWords.dictionary.learn(it) }
-            userWords.flush()
-        }
-    }
+    private fun composeSentence(action: Action): Boolean {
+        val typing = typing?.takeIf { !symbols && !digits } ?: return false
 
-    /** Puts the reading into the field, and remembers its words so the next time is cheaper. */
-    private fun sendSentence(composer: SentenceComposer) {
-        clock.removeCallbacks(settling)
-        // The reading is about to reach the field, so it has to be the reading of every press —
-        // including any made since the last one was worked out. Settling on the decoder's own
-        // thread and waiting keeps one thread in the decoder; the wait is bounded by one read and
-        // is paid at the moment the user asked for the text rather than while they are typing.
-        if (composer.pending() != null) {
-            runCatching { decoding.submit { composer.settle() }.get(SETTLE_LIMIT, TimeUnit.SECONDS) }
+        if (action is Action.Number) {
+            when (action.digit) {
+                '0' -> deferredKey = KeyEvent.KEYCODE_UNKNOWN
+                '1' -> {
+                    currentInputConnection?.deleteSurroundingText(1, 0)
+                    punctuationAt = -1
+                }
+            }
         }
-        val words = composer.words.map { it.text }
-        val reading = composer.commit()
-        val connection = currentInputConnection
-        if (reading.isEmpty()) {
-            connection?.finishComposingText()
-            return
-        }
-        connection?.commitText(letterCase.apply(reading), 1)
-        letterCase = letterCase.afterWord()
-        if (mayLearn) {
-            words.forEach { userWords.dictionary.learn(it) }
-            userWords.flush()
-        }
+
+        typing.letterCase = letterCase
+        val spent = typing.press(action)
+        letterCase = typing.letterCase
+        return spent
     }
 
     /** Shows the pending word inline, so the field always reads as what committing would leave. */

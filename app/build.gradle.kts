@@ -94,8 +94,22 @@ kotlin {
     jvmToolchain(17)
 }
 
+/**
+ * Unit tests for this module, which had none.
+ *
+ * Every bug the television has shown lived here rather than in `core`, where a hundred and eight
+ * tests were watching code that had not broken. They were not Android bugs - see `Editor` - and
+ * they run on the JVM like everything else.
+ */
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    testLogging { events("passed", "failed", "skipped") }
+}
+
 dependencies {
     implementation(project(":core"))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
     // Receiver registration flags only, for the install-result broadcast in the updater.
     implementation(libs.androidx.core)
 }
