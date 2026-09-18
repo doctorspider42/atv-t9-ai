@@ -22,6 +22,8 @@ import io.github.vagrant326.atvt9.core.T9Engine
 import io.github.vagrant326.atvt9.core.decode.BeamDecoder
 import io.github.vagrant326.atvt9.core.decode.SentenceComposer
 import io.github.vagrant326.atvt9.core.decode.Source
+import io.github.vagrant326.atvt9.log.TypingLog
+import io.github.vagrant326.atvt9.log.TypingLogs
 import io.github.vagrant326.atvt9.model.DictionaryRepository
 import io.github.vagrant326.atvt9.model.Language
 import io.github.vagrant326.atvt9.model.UserWords
@@ -44,6 +46,12 @@ class T9ImeService : InputMethodService() {
     private lateinit var userWords: UserWords
     private lateinit var strip: CandidateStripView
     private lateinit var engine: T9Engine
+
+    /**
+     * The dev build's record of what was typed and what was made of it. [TypingLog.NONE] in the
+     * released app, where the class that writes files is not compiled in at all.
+     */
+    private lateinit var typingLog: TypingLog
 
     /**
      * Whether anything typed in the current field may be remembered.
@@ -150,6 +158,7 @@ class T9ImeService : InputMethodService() {
                     if (BuildConfig.DEBUG) {
                         Log.i(TAG, "read ${keys.length} keys in ${took}ms off the main thread")
                     }
+                    typingLog.read(keys, readings.map { it.text })
                     setComposing()
                     render()
                 }
@@ -194,6 +203,7 @@ class T9ImeService : InputMethodService() {
         dictionaries = DictionaryRepository(this)
         userWords = UserWords.of(this)
         engine = T9Engine(null, userWords.dictionary)
+        typingLog = TypingLogs.of(this)
         warm()
     }
 
@@ -312,6 +322,10 @@ class T9ImeService : InputMethodService() {
         engine.reset()
         engine.dictionary = dictionaries.dictionaryFor(preferences.activeLanguage)
         mayLearn = preferences.isLearning && isLearnable(info)
+        // The recorder is refused by the field's own declaration rather than by the learning
+        // setting: somebody who has turned learning off has said what may be kept, not what may
+        // be measured, and a password box refuses both regardless of either.
+        typingLog.opened(fieldDescription(info), allowed = isLearnable(info))
         composer = composerFor()
         showLanguages = false
         deferredKey = KeyEvent.KEYCODE_UNKNOWN
@@ -334,7 +348,18 @@ class T9ImeService : InputMethodService() {
         render()
     }
 
+    /**
+     * What sort of box this is, for the record, and nothing that identifies it.
+     *
+     * The input type and the package that asked, because "the presses were slower in the search
+     * box than in the scratch field" is a thing worth being able to see, and neither of those is
+     * the contents of anything.
+     */
+    private fun fieldDescription(info: EditorInfo?): String =
+        "type=${info?.inputType ?: 0} options=${info?.imeOptions ?: 0} app=${info?.packageName}"
+
     override fun onFinishInput() {
+        typingLog.closed()
         // The field is going away, so a reading asked for on its behalf has nowhere to land.
         clock.removeCallbacks(settling)
         finishWord(commit = false)
@@ -410,6 +435,16 @@ class T9ImeService : InputMethodService() {
     }
 
     private fun handle(action: Action): Boolean {
+        // Recorded here rather than in each branch below, because here is the one place every
+        // press passes through, whichever mode it lands in. What the press *meant* is the thing
+        // worth having: `act delete` after four letters is a correction, and a correction is the
+        // only ground truth anybody gets without asking the user what they were trying to type.
+        when (action) {
+            is Action.Digit -> typingLog.pressed(action.digit)
+            is Action.Ignore -> Unit
+            else -> typingLog.acted(action.toString())
+        }
+
         // The mark layer is spent by one mark, and cycling that mark is a run of presses on the
         // same key. Anything else ends the layer *before* it is handled, so a letter press that
         // follows a mark comes out of the letter run and not the symbol run.
@@ -737,6 +772,7 @@ class T9ImeService : InputMethodService() {
                     userWords.flush()
                 }
             },
+            committed = { keys, text -> typingLog.put(keys, text) },
         )
         return composing
     }

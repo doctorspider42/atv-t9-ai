@@ -134,6 +134,21 @@ Everything learnt is listed in **Settings → Your words**, and any of it can be
 store that cannot be inspected or emptied would make the privacy claim unverifiable, and the
 claim is the reason a keyboard is allowed to hold `INTERNET` at all.
 
+**The dev build records typing, and the released one cannot.** Every number this decoder is tuned
+with came from somebody copying phrases into a window on a PC with a numeric keypad, which is a
+good way to measure a thumb and a bad way to measure a household. So the dev channel writes what
+actually happens — each press and when it arrived, what the decoder offered, and which reading was
+kept — to `/sdcard/Android/data/<id>/files/typing.tsv`, where `adb pull` reaches it. A correction
+is the only ground truth nobody has to be asked for.
+
+It is off-limits in the same fields learning is: a password, a field that set
+`IME_FLAG_NO_PERSONALIZED_LEARNING`, a no-suggestions field, an address. Those refuse it whatever
+the setting says, and the refusal is the only thing written for them. **Settings → Typing record**
+switches it off and deletes what is there.
+
+The class that writes the file lives in `src/dev` and is not compiled into `prod` at all, so the
+paragraph above this one is a fact about the released APK rather than a promise about a default.
+
 ## The network permission
 
 `INTERNET` and `REQUEST_INSTALL_PACKAGES` are held for one screen: the updater, which runs in its

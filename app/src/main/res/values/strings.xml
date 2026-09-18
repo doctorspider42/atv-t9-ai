@@ -193,4 +193,9 @@
     <string name="update_privacy">Checked only when you press it. One request for the version, one for the file, nothing sent. What you type never leaves the device.</string>
     <string name="update_back">BACK returns to settings.</string>
 
+    <string name="settings_section_record">Typing record</string>
+    <string name="settings_record">Record what I type</string>
+    <string name="settings_record_note">Dev builds only, and it is how this keyboard gets measured on the sofa instead of at a desk. It keeps the presses, when each one arrived, what the decoder offered and which reading you kept — a correction is the only honest answer to "was that right". Password, no-suggestion and address fields are refused whatever this says. Fetch it with adb pull from %1$s.</string>
+    <string name="settings_record_size">%1$d kB</string>
+    <string name="settings_record_clear">Delete the record</string>
 </resources>

@@ -22,7 +22,26 @@ class SentenceTyping(
     private val spelling: () -> Boolean = { false },
     /** Committed words, for the store that makes the second typing of a title cheap. */
     private val learn: (List<String>) -> Unit = {},
+    /**
+     * Text as it reaches the field, for the dev build's record.
+     *
+     * Separate from [learn] because the two answer to different rules and happen at different
+     * times: learning is refused by a setting as well as by the field, and takes words with the
+     * case stripped off because that is what a dictionary holds. This is what the user actually
+     * saw appear, which is the thing a reading has to be judged against.
+     */
+    private val committed: (keys: String, text: String) -> Unit = { _, _ -> },
 ) {
+
+    /**
+     * The presses in the air when this press arrived, for the record to pair with what came out.
+     *
+     * Taken before the action is handled, because the actions worth recording are exactly the
+     * ones that empty the composition: by the time a space has settled a segment, the presses
+     * that produced it are gone. Pairing them afterwards from the log's own key lines would work
+     * until the first delete.
+     */
+    private var before = ""
 
     /** Applied where words reach the field and never where they reach a dictionary. */
     var letterCase: LetterCase = LetterCase.LOWER
@@ -37,6 +56,7 @@ class SentenceTyping(
         if (spelling()) {
             return false
         }
+        before = composer.pressed
 
         when (action) {
             is Action.Digit -> composer.press(action.digit)
@@ -144,8 +164,10 @@ class SentenceTyping(
         if (settled.isEmpty()) {
             return
         }
-        editor.commit(letterCase.apply(settled))
+        val text = letterCase.apply(settled)
+        editor.commit(text)
         letterCase = letterCase.afterWord()
+        committed(before, text)
         learn(settled.trim().split(' ').filter { it.isNotEmpty() })
     }
 
@@ -160,8 +182,10 @@ class SentenceTyping(
             editor.abandonComposing()
             return
         }
-        editor.commit(letterCase.apply(reading))
+        val text = letterCase.apply(reading)
+        editor.commit(text)
         letterCase = letterCase.afterWord()
+        committed(before, text)
         learn(words)
     }
 

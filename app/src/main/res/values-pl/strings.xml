@@ -173,4 +173,9 @@
     <string name="update_privacy">Sprawdzane tylko wtedy, kiedy naciśniesz. Jedno zapytanie o wersję, jedno o plik, nic wysyłanego. To, co piszesz, nigdy nie opuszcza urządzenia.</string>
     <string name="update_back">BACK wraca do ustawień.</string>
 
+    <string name="settings_section_record">Zapis pisania</string>
+    <string name="settings_record">Zapisuj, co piszę</string>
+    <string name="settings_record_note">Tylko w buildach dev — tak ta klawiatura daje się zmierzyć na kanapie, a nie przy biurku. Trzyma naciśnięcia, moment każdego z nich, to co zaproponował dekoder i to, co zostawiłeś — poprawka jest jedyną uczciwą odpowiedzią na pytanie „czy dobrze odczytał". Pola z hasłem, bez podpowiedzi i adresowe są pomijane niezależnie od tego ustawienia. Ściągasz przez adb pull z %1$s.</string>
+    <string name="settings_record_size">%1$d kB</string>
+    <string name="settings_record_clear">Usuń zapis</string>
 </resources>

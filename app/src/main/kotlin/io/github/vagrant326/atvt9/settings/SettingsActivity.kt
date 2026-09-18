@@ -21,6 +21,8 @@ import android.widget.TextView
 import io.github.vagrant326.atvt9.BuildConfig
 import io.github.vagrant326.atvt9.R
 import io.github.vagrant326.atvt9.ime.KeyBindings
+import io.github.vagrant326.atvt9.log.TypingLog
+import io.github.vagrant326.atvt9.log.TypingLogs
 import io.github.vagrant326.atvt9.model.DictionaryRepository
 import io.github.vagrant326.atvt9.model.Language
 import io.github.vagrant326.atvt9.model.UserWords
@@ -37,6 +39,7 @@ import io.github.vagrant326.atvt9.update.UpdateActivity
 class SettingsActivity : Activity() {
 
     private lateinit var preferences: Preferences
+    private lateinit var typingLog: TypingLog
     private lateinit var dictionaries: DictionaryRepository
 
     /**
@@ -51,6 +54,7 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = Preferences(this)
+        typingLog = TypingLogs.of(this)
         dictionaries = DictionaryRepository(this)
 
         // Rows are capped rather than stretched across the panel. A full-width control on a
@@ -111,6 +115,16 @@ class SettingsActivity : Activity() {
 
         content.addView(sectionLabel(getString(R.string.settings_section_typing)))
         content.addView(caption(getString(R.string.settings_typing_note)))
+
+        // Only where there is a recorder to switch on, which is the dev channel. In the released
+        // app `TypingLogs.of` hands back a recorder that does nothing and this section is absent
+        // rather than present and off — a switch for a thing that cannot happen is a worse lie
+        // than no switch at all.
+        if (typingLog.isAvailable) {
+            content.addView(sectionLabel(getString(R.string.settings_section_record)))
+            content.addView(recordRow())
+            content.addView(caption(getString(R.string.settings_record_note, typingLog.where)))
+        }
 
         content.addView(sectionLabel(getString(R.string.settings_section_try)))
         content.addView(scratchField())
@@ -327,6 +341,39 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             addView(control)
             addView(caption(getString(R.string.settings_learning_note)))
+        }
+    }
+
+    /**
+     * The recorder's switch, how much it has written, and the button that throws it away.
+     *
+     * The size is on the row rather than in the note because it is the only thing on this screen
+     * that grows while nobody is looking, and a record somebody cannot see the size of is a
+     * record they will not trust. Deleting is one press and asks nothing: what is in there is
+     * measurement, and a user who wants it gone is entitled to have it gone.
+     */
+    private fun recordRow(): View {
+        lateinit var state: TextView
+        lateinit var size: TextView
+
+        fun sizeText() = getString(R.string.settings_record_size, (typingLog.bytes + 512) / 1024)
+
+        val control = row(getString(R.string.settings_record), checkbox(typingLog.isOn)) {
+            typingLog.isOn = !typingLog.isOn
+            state.text = checkbox(typingLog.isOn)
+        }
+        state = control.getChildAt(1) as TextView
+
+        val erase = row(getString(R.string.settings_record_clear), sizeText()) {
+            typingLog.clear()
+            size.text = sizeText()
+        }
+        size = erase.getChildAt(1) as TextView
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(control)
+            addView(erase)
         }
     }
 
