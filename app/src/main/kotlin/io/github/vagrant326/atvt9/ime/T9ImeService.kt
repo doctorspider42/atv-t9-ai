@@ -919,12 +919,23 @@ class T9ImeService : InputMethodService() {
         /**
          * How long the typing has to stop before it is worth reading.
          *
-         * Above the gap between two presses, which the typing record puts at a median of 195 ms,
-         * so a run of presses costs one decode at the end of it rather than one per press. At 150
-         * it fired between the presses of anybody typing at the speed this keyboard is for, which
-         * is the speed that made it feel slow.
+         * Deliberately *below* the gap between two presses, which the typing record puts at a
+         * median of 195 ms, so that a press gets its own reading and the word appears while the
+         * word is being typed.
+         *
+         * It used to be 300, chosen to sit above that gap so a run of presses cost one decode at
+         * the end of it instead of one per press. That was the right trade when a decode was
+         * hundreds of milliseconds on the thread that draws the keyboard: the reading was worth
+         * waiting for because asking for it early cost the next press. It is the wrong trade now.
+         * A decode is 11-27ms on a background thread, and the 300 was not saving anything the
+         * user could feel - it *was* what the user could feel. Five presses in a burst produced
+         * exactly one reading, 300ms after the last of them, and until then the strip showed the
+         * digits pressed, which is what "it shows me numbers instead of words" meant.
+         *
+         * Not zero, because a burst faster than a decode would queue one decode per press and
+         * every one but the last would be thrown away by [SentenceComposer.apply] anyway.
          */
-        const val SETTLE_MILLIS = 300L
+        const val SETTLE_MILLIS = 60L
 
         /** The query the keyboard reads to itself before anybody types one. See [warm]. */
         const val WARM_KEYS = "26"
