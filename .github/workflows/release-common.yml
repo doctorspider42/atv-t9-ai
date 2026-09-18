@@ -99,6 +99,8 @@ jobs:
       - name: Restore keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'atv' }}
         run: |
           set -eu
           if [ -z "$KEYSTORE_BASE64" ]; then
@@ -107,12 +109,30 @@ jobs:
           fi
           printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks"
 
+          # Checked here rather than left to Gradle, which reports a missing alias as a
+          # KeytoolException from `packageDevRelease` three minutes into the build and does not say
+          # what the keystore actually holds. An alias is not a secret, so the ones present can be
+          # printed, and that turns "no key with alias X" into an answer.
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+              -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::No key called '$KEY_ALIAS' in this keystore. Set the KEY_ALIAS secret to one of the names below."
+            keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+              -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | grep -i "alias name" || true
+            exit 1
+          fi
+
       - name: Assemble release
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: atv
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # `atv` is what the keystore this project has always released with calls its key. A fork
+          # signs with its own, whose key is called whatever its owner typed, so the name is a
+          # secret with that as the default rather than a constant.
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'atv' }}
+          # A PKCS12 keystore - which is what `keytool` has produced since Java 9 - requires the
+          # key password to equal the store password, so one secret covers both unless somebody is
+          # carrying an older JKS that separates them.
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}
         run: |
           ./gradlew --no-daemon assemble${{ inputs.flavour }}Release \
             -PversionCode=${{ steps.v.outputs.code }} \
