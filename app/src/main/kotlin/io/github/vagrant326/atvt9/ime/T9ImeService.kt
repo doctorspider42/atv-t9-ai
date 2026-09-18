@@ -270,6 +270,8 @@ class T9ImeService : InputMethodService() {
     }
 
     override fun onFinishInput() {
+        // The field is going away, so a reading asked for on its behalf has nowhere to land.
+        clock.removeCallbacks(settling)
         finishWord(commit = false)
         userWords.flush()
         super.onFinishInput()
@@ -353,6 +355,7 @@ class T9ImeService : InputMethodService() {
         if (composeSentence(action)) {
             setComposing()
             render()
+            scheduleSettle()
             return true
         }
 
@@ -704,6 +707,27 @@ class T9ImeService : InputMethodService() {
         val spent = typing.press(action)
         letterCase = typing.letterCase
         return spent
+    }
+
+    /**
+     * Asks for a reading once the typing stops, and takes back the one already asked for.
+     *
+     * Without this the runnable above was written, removed on destruction, and never once posted:
+     * nothing ever read the presses in the background, so the strip stayed empty for the whole
+     * word and the only decode that happened was the synchronous one `settleSegment` does on the
+     * space — on the thread that draws the keyboard, which is exactly what moving it off was for.
+     * The television showed the symptom plainly: words appeared a whole word late, in a jump.
+     *
+     * Re-posting on every press is the point rather than an optimisation. A decode per press is
+     * work thrown away four times in five at the speed this is meant to be typed at, and the
+     * delay is chosen to sit above the gap between two presses and below the pause between two
+     * words.
+     */
+    private fun scheduleSettle() {
+        clock.removeCallbacks(settling)
+        if (composer?.stale == true) {
+            clock.postDelayed(settling, SETTLE_MILLIS)
+        }
     }
 
     /** Shows the pending word inline, so the field always reads as what committing would leave. */
