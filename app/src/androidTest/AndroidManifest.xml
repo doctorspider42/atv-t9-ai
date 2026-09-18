@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!-- The field the smoke test types into. It lives in the test APK rather than in the
+             keyboard, because a screen that exists only to be typed at has no business shipping
+             to a television — and driving the Settings app instead would tie the test to a
+             layout that differs between a TV image and a phone one.
+
+             Exported because the instrumentation starts it from the process of the application
+             under test, which is a different uid from the package that declares it. -->
+        <activity
+            android:name="io.github.vagrant326.atvt9.ime.TypingActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault" />
+
+    </application>
+
+</manifest>

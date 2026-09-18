@@ -18,6 +18,11 @@ android {
         targetSdk = 35
         versionCode = (providers.gradleProperty("versionCode").orNull ?: "1").toInt()
         versionName = providers.gradleProperty("versionName").orNull ?: "0.0.0-dev"
+
+        // The instrumented side runs on JUnit 4, which is not a choice: AndroidJUnitRunner is
+        // what a device test is started by and it has no Jupiter engine. The JVM tests below
+        // stay on Jupiter, in a source set this runner never sees.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     /**
@@ -112,6 +117,13 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
     // Receiver registration flags only, for the install-result broadcast in the updater.
     implementation(libs.androidx.core)
+
+    // One smoke test on a device. UiAutomator because everything it has to do first — enable the
+    // keyboard, select it, tell Android to show it while a hardware keyboard is attached — is a
+    // shell command, and because the keyboard's own window belongs to no activity the test owns.
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }
 
 /**
