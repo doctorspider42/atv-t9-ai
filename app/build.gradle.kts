@@ -283,3 +283,55 @@ tasks.register("tv") {
         )
     }
 }
+
+/**
+ * Refuses to run the device test until it is clear which device it is for.
+ *
+ * AGP installs onto everything attached and cannot be told otherwise, which is the same gap
+ * `tv` above works around by installing by serial — except that this one uninstalls first, and
+ * it has already taken a working keyboard off a real television that happened to be on the
+ * network. `ANDROID_SERIAL` is what AGP does honour, so the bargain is: say which device, or
+ * have exactly one and let it be an emulator.
+ *
+ * A single television attached on its own is refused too, and that is deliberate rather than
+ * over-careful. The build on a television is signed, installed and in use; this one is debug
+ * and version 1, so the install is a downgrade that fails only after the uninstall has already
+ * succeeded. Somebody who really does mean the television can say so, and then it is a choice
+ * rather than a surprise.
+ *
+ * Nothing happens on CI, where there is one emulator and nothing else to confuse it with.
+ */
+tasks.matching { it.name.startsWith("connected") && it.name.endsWith("AndroidTest") }
+    .configureEach {
+        val adb = adbPath
+        val chosen = providers.environmentVariable("ANDROID_SERIAL")
+        doFirst {
+            if (chosen.isPresent) {
+                return@doFirst
+            }
+            val process = ProcessBuilder(adb, "devices").redirectErrorStream(true).start()
+            // Trimmed line by line, because adb on Windows ends every one of them with a carriage
+            // return and a filter that forgets it matches nothing at all — which is a guard that
+            // reports all clear whatever is attached, and is worse than no guard.
+            val attached = process.inputStream.bufferedReader().readText()
+                .lines()
+                .drop(1)
+                .map { it.trim() }
+                .filter { it.endsWith("device") }
+                .map { it.substringBefore('\t').trim() }
+            process.waitFor()
+
+            val emulators = attached.filter { it.startsWith("emulator-") }
+            if (attached.size > 1 || attached.size != emulators.size) {
+                error(
+                    """
+                    set ANDROID_SERIAL and say which of these the device test is for. It installs
+                    by uninstalling first, and picking the wrong one once is a keyboard off
+                    somebody's television.
+
+                      attached: ${attached.joinToString()}
+                    """.trimIndent()
+                )
+            }
+        }
+    }
