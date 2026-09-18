@@ -31,10 +31,13 @@ import java.io.OutputStream
  *     count    u32
  *     entries  count x (u8 length, length bytes UTF-8, u32 uses)
  */
-class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) {
+class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) : Lexicon {
 
     private val uses = HashMap<String, Int>()
     private val bySequence = HashMap<String, MutableList<String>>()
+
+    /** Every prefix of every sequence held, so [hasPrefix] is a lookup. See it for why. */
+    private val prefixes = HashSet<String>()
 
     var isDirty: Boolean = false
         private set
@@ -54,6 +57,9 @@ class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) {
         uses[normalised] = ((previous ?: 0) + 1).coerceAtMost(MAX_USES)
         if (previous == null) {
             bySequence.getOrPut(sequence) { ArrayList(2) }.add(normalised)
+            for (length in 1..sequence.length) {
+                prefixes.add(sequence.substring(0, length))
+            }
             if (uses.size > capacity) {
                 evictLeastUsed()
             }
@@ -74,12 +80,30 @@ class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) {
                     bySequence.remove(sequence)
                 }
             }
+            // Rebuilt rather than unpicked: a prefix may belong to several sequences and working
+            // out which of them still need it costs more than the few thousand strings this is.
+            prefixes.clear()
+            for (held in bySequence.keys) {
+                for (length in 1..held.length) {
+                    prefixes.add(held.substring(0, length))
+                }
+            }
         }
         isDirty = true
         return true
     }
 
-    fun contains(word: String): Boolean = word.lowercase() in uses
+    override fun contains(word: String): Boolean = word.lowercase() in uses
+
+    /**
+     * Whether any word here starts with [digits].
+     *
+     * Kept as a set of every prefix of every sequence rather than searched for. The decoder asks
+     * this tens of thousands of times a second and a scan over the sequences would be linear in
+     * the store on each one; a few thousand words make a few tens of thousands of prefixes, which
+     * is nothing beside the dictionary already in memory.
+     */
+    override fun hasPrefix(digits: String): Boolean = digits.isEmpty() || digits in prefixes
 
     fun usesOf(word: String): Int = uses[word.lowercase()] ?: 0
 
@@ -97,7 +121,7 @@ class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) {
      * use climbs, and by the third the word wins its sequence outright. That curve is the whole
      * adaptation policy; there is no other model here.
      */
-    fun candidates(digits: String, limit: Int = Dictionary.DEFAULT_LIMIT): List<Candidate> {
+    override fun candidates(digits: String, limit: Int): List<Candidate> {
         if (digits.isEmpty() || limit <= 0) {
             return emptyList()
         }
@@ -197,6 +221,9 @@ class UserDictionary(private val capacity: Int = DEFAULT_CAPACITY) {
                 Keypad.sequenceOf(word)?.let { sequence ->
                     dictionary.uses[word] = count
                     dictionary.bySequence.getOrPut(sequence) { ArrayList(2) }.add(word)
+                    for (length in 1..sequence.length) {
+                        dictionary.prefixes.add(sequence.substring(0, length))
+                    }
                 }
             }
             dictionary.isDirty = false

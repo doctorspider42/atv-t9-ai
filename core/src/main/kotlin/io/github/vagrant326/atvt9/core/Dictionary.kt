@@ -55,7 +55,7 @@ class Dictionary private constructor(
     val indexStep: Int,
     private val indexAt: IntArray,
     private val entriesAt: Int,
-) {
+) : Lexicon {
 
     /**
      * Every key sequence the dictionary holds, packed into a long apiece and in order.
@@ -85,7 +85,7 @@ class Dictionary private constructor(
      * done for a strip nobody reads that far along. The cap costs a rare good completion behind
      * a very short prefix, which is the cheapest thing here to be wrong about.
      */
-    fun candidates(digits: String, limit: Int = DEFAULT_LIMIT): List<Candidate> {
+    override fun candidates(digits: String, limit: Int): List<Candidate> {
         if (digits.isEmpty() || limit <= 0) {
             return emptyList()
         }
@@ -123,7 +123,7 @@ class Dictionary private constructor(
 
     /** Whether the dictionary already holds [word], which is what stops the user layer growing a
      *  second copy of every common word the moment somebody types one. */
-    fun contains(word: String): Boolean {
+    override fun contains(word: String): Boolean {
         val digits = Keypad.sequenceOf(word) ?: return false
         val cursor = seek(digits) ?: return false
         while (cursor.advance()) {
@@ -150,7 +150,7 @@ class Dictionary private constructor(
      * yes where the truth is no — and a yes only keeps a beam state alive, where closing a word
      * still asks the dictionary itself. So the cost of being wrong that far out is one state.
      */
-    fun hasPrefix(digits: String): Boolean {
+    override fun hasPrefix(digits: String): Boolean {
         if (digits.isEmpty()) {
             return true
         }

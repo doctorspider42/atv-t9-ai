@@ -75,6 +75,25 @@ enum class Binding(
         R.string.binding_digits_prompt,
         R.string.binding_digits_fallback,
     ),
+
+    /**
+     * Capitals and the mark layer, which used to be a held `0` and a held `1`.
+     *
+     * They moved because holding a number key now types that number, which is the one thing a
+     * remote's number row could always do and this keyboard could not. That gesture is worth more
+     * than either of these: a digit in a search box is common and neither of these is, and both
+     * survive here where nothing else had to give way.
+     */
+    CASE(
+        R.string.binding_case,
+        R.string.binding_case_prompt,
+        R.string.binding_case_fallback,
+    ),
+    SYMBOLS(
+        R.string.binding_symbols,
+        R.string.binding_symbols_prompt,
+        R.string.binding_symbols_fallback,
+    ),
 }
 
 class Preferences(context: Context) {
@@ -190,6 +209,14 @@ class Preferences(context: Context) {
         get() = store.getBoolean(KEY_LEARNING, true)
         set(value) = store.edit().putBoolean(KEY_LEARNING, value).apply()
 
+    var caseKeyCode: Int
+        get() = store.getInt(KEY_CASE_KEYCODE, KeyBindings.NO_KEY)
+        set(value) = store.edit().putInt(KEY_CASE_KEYCODE, value).apply()
+
+    var symbolsKeyCode: Int
+        get() = store.getInt(KEY_SYMBOLS_KEYCODE, KeyBindings.NO_KEY)
+        set(value) = store.edit().putInt(KEY_SYMBOLS_KEYCODE, value).apply()
+
     val customKeys: CustomKeys
         get() = CustomKeys(
             triggerKeyCode,
@@ -197,6 +224,8 @@ class Preferences(context: Context) {
             deleteKeyCode,
             languageKeyCode,
             digitsKeyCode,
+            caseKeyCode,
+            symbolsKeyCode,
         )
 
     fun keyCodeFor(binding: Binding): Int = when (binding) {
@@ -205,6 +234,8 @@ class Preferences(context: Context) {
         Binding.DELETE -> deleteKeyCode
         Binding.LANGUAGE -> languageKeyCode
         Binding.DIGITS -> digitsKeyCode
+        Binding.CASE -> caseKeyCode
+        Binding.SYMBOLS -> symbolsKeyCode
     }
 
     fun assign(binding: Binding, keyCode: Int) {
@@ -214,6 +245,8 @@ class Preferences(context: Context) {
             Binding.DELETE -> deleteKeyCode = keyCode
             Binding.LANGUAGE -> languageKeyCode = keyCode
             Binding.DIGITS -> digitsKeyCode = keyCode
+            Binding.CASE -> caseKeyCode = keyCode
+            Binding.SYMBOLS -> symbolsKeyCode = keyCode
         }
     }
 
@@ -228,6 +261,8 @@ class Preferences(context: Context) {
         const val KEY_DELETE_KEYCODE = "delete_keycode"
         const val KEY_LANGUAGE_KEYCODE = "language_keycode"
         const val KEY_DIGITS_KEYCODE = "digits_keycode"
+        const val KEY_CASE_KEYCODE = "case_keycode"
+        const val KEY_SYMBOLS_KEYCODE = "symbols_keycode"
         const val KEY_HINT_MODE = "hint_mode"
         const val KEY_LEARNING = "learning"
     }

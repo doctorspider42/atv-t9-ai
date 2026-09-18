@@ -43,6 +43,17 @@ sealed interface Action {
     data object ToggleDigits : Action
 
     /**
+     * One digit, from holding its key, straight into the field.
+     *
+     * The one thing a remote's number row could always do and this keyboard could not: a search
+     * box asks for `26` or `2026` often enough, and getting there meant finding the digit mode,
+     * turning it on, typing, and turning it off. A hold is the gesture nothing else on a number
+     * key was using — `2`-`9` held did nothing at all, and what `0` and `1` held were doing has
+     * moved to keys the user picks.
+     */
+    data class Number(val digit: Char) : Action
+
+    /**
      * `abc` → `Abc` → `ABC` → `abc`, from holding `0`.
      *
      * Held rather than tapped because there is nothing left to tap: the reserved list below is the
@@ -102,6 +113,8 @@ data class CustomKeys(
     val delete: Int,
     val language: Int,
     val digits: Int,
+    val case: Int,
+    val symbols: Int,
 )
 
 object KeyBindings {
@@ -193,21 +206,18 @@ object KeyBindings {
         }
 
         if (longPress) {
-            // Spelling hangs off `1` and nothing else. It used to hang off all eight letter
-            // keys, which made it invisible: an undiscoverable gesture on a key with no label
-            // is the same as no feature. One key can be named on the grid, and is.
-            if (keyCode == KeyEvent.KEYCODE_1 && !digits) {
-                // One hold, two meanings, chosen by whether there is a word to act on. Spelling
-                // is what the strip already advertises for a sequence with no match — "hold 1 to
-                // spell it" is shown *while composing* and nowhere else — so that is the state it
-                // belongs to. Outside a word there is nothing to spell, and a mark is what the
-                // user reaches `1` for anyway.
-                return if (composing) Action.Spell else Action.ToggleSymbols
+            // A held number key types that number. It costs the two gestures that used to live
+            // here - capitals on `0` and the mark layer on `1` - and both moved to keys the user
+            // assigns, because a digit in a search box is common and neither of those is.
+            //
+            // In the digit mode the short press already types the digit, so the hold has nothing
+            // left to say and is swallowed rather than repeating it.
+            if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+                val digit = '0' + (keyCode - KeyEvent.KEYCODE_0)
+                return if (digits) Action.Ignore else Action.Number(digit)
             }
-            // Nothing to capitalise in a digit field, and a gesture that silently does nothing is
-            // worse than one that is not there.
-            if (keyCode == KeyEvent.KEYCODE_0) {
-                return if (digits) Action.Ignore else Action.ToggleCase
+            if (custom.case != NO_KEY && keyCode == custom.case) {
+                return Action.Ignore // its short press already switched the case
             }
             if (custom.delete != NO_KEY && keyCode == custom.delete) {
                 return Action.WordDelete
@@ -239,6 +249,16 @@ object KeyBindings {
         }
         if (custom.digits != NO_KEY && keyCode == custom.digits) {
             return Action.ToggleDigits
+        }
+        // Capitals and the mark layer, which a held `0` and a held `1` used to carry. Unassigned
+        // by default and therefore unreachable by default, which is the honest state of affairs:
+        // the gesture they had is spent, and a keyboard that pretended otherwise would be lying
+        // about a key nothing is printed on anyway.
+        if (custom.case != NO_KEY && keyCode == custom.case && !digits) {
+            return Action.ToggleCase
+        }
+        if (custom.symbols != NO_KEY && keyCode == custom.symbols && !digits) {
+            return Action.ToggleSymbols
         }
 
         // In digit mode the row is deterministic: every key is the digit printed on it, and

@@ -1,6 +1,7 @@
 package io.github.vagrant326.atvt9.core.decode
 
 import io.github.vagrant326.atvt9.core.Dictionary
+import io.github.vagrant326.atvt9.core.Lexicon
 
 /**
  * The contract the decoder is built to, written before there was a decoder.
@@ -55,8 +56,9 @@ interface Decoder {
  * which is why it is data here and not a constant in the scoring function.
  */
 data class Source(
-    val language: String,
-    val dictionary: Dictionary,
+    /** The language, or null for words that have none — see the fourth point above. */
+    val language: String?,
+    val dictionary: Lexicon,
     val prior: Double,
     /**
      * What this language says about which word follows which.

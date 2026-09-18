@@ -62,9 +62,15 @@
     <string name="binding_trigger">Show the keyboard</string>
     <string name="binding_trigger_prompt">Press the key that should open the keyboard when it is hidden.</string>
     <string name="binding_trigger_fallback">Without this the keyboard only appears when an app asks for it, which Netflix and YouTube do not always do.</string>
+    <string name="binding_case">Capitals</string>
+    <string name="binding_case_prompt">Press the key that should switch between abc, Abc and ABC.</string>
+    <string name="binding_case_fallback">Unassigned. It used to be a held 0, and that gesture now types a 0.</string>
+    <string name="binding_symbols">Marks on the number keys</string>
+    <string name="binding_symbols_prompt">Press the key that should put every QWERTY mark on 2–9, four to a key.</string>
+    <string name="binding_symbols_fallback">Unassigned. It used to be a held 1, and that gesture now types a 1. Key 1 still cycles the seven marks a query needs.</string>
     <string name="binding_spell">Spell a new word</string>
     <string name="binding_spell_prompt">Press the key that should switch to spelling letter by letter.</string>
-    <string name="binding_spell_fallback">Also reachable by holding 1, which the grid on the keyboard says.</string>
+    <string name="binding_spell_fallback">Unassigned. It used to be a held 1 while a word was in progress, and that gesture now types a 1.</string>
     <string name="binding_delete">Delete</string>
     <string name="binding_delete_prompt">Press the key that should delete.</string>
     <string name="binding_delete_fallback">Up already deletes, and always does. Assign a key only if you would rather not reach for the d-pad.</string>
@@ -116,9 +122,9 @@
     <string name="strip_fallback_spell">hold 1</string>
     <string name="strip_delete_keys" translatable="false">▲</string>
     <string name="strip_hint_case">Capitals</string>
-    <string name="strip_case_keys">Hold 0 · one word, then locked</string>
+    <string name="strip_case_keys">Assign a key · one word, then locked</string>
     <string name="strip_hint_symbols">Marks</string>
-    <string name="strip_symbol_keys">Hold 1 between words · all 32</string>
+    <string name="strip_symbol_keys">Assign a key · all 32</string>
     <string name="strip_symbols">MARKS — tap a key, tap again to change it</string>
     <string name="strip_case_once" translatable="false">Abc</string>
     <string name="strip_case_locked" translatable="false">ABC</string>
