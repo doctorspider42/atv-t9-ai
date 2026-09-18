@@ -176,8 +176,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--language", choices=("pl", "en"), required=True)
     parser.add_argument("--megabytes", type=int, default=40)
-    parser.add_argument("--titles", type=int, default=10000, help="labels per page")
-    parser.add_argument("--pages", type=int, default=3)
+    # Two thousand, not ten. At ten the endpoint returned the musician pages as truncated JSON
+    # every single time — the same failure at the same byte, four attempts apart, so not a flaky
+    # connection but a response it will not finish sending. At two thousand the same query returns
+    # six thousand labels. More pages for the same total, and the total is what matters.
+    parser.add_argument("--titles", type=int, default=2000, help="labels per page")
+    parser.add_argument("--pages", type=int, default=12)
     parser.add_argument("--skip-subtitles", action="store_true")
     parser.add_argument("--skip-titles", action="store_true")
     arguments = parser.parse_args()

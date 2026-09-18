@@ -6,8 +6,22 @@ less clear than a word-frequency table derived from them.
 
 ```bash
 python3 fetch.py --language pl --megabytes 250
-python3 build.py --language pl --words 120000 --title-weight 20
+python3 build.py --language pl --words 120000 --title-weight 20 --pairs 400000
 ```
+
+`build.py` writes two files: the dictionary, and `bigrams-<language>.bin`, the word pairs the
+decoder uses to tell `z` from `w`. Both are committed.
+
+**Wikidata refuses more often than it answers.** Pages come back 500, 502, 504 and as truncated
+JSON, and at ten thousand labels a page the musician query failed *every* time — the same
+truncation at the same byte, four attempts apart, which is a response the endpoint will not finish
+sending rather than a connection that dropped. Two thousand a page returns six thousand of them,
+so that is the default now.
+
+Run it twice. Failures come in bursts, the second run merges with what the first got, and the
+count of pages that never arrived is printed at the end — that number is how much to disbelieve
+the corpus by. A fifth of it looks exactly like all of it from the inside, and a dictionary built
+on that is quietly worse in precisely the domain this keyboard is for.
 
 `build.py` writes `../app/src/main/assets/dictionary-<language>.bin`, which **is** committed. The
 dictionary is a finished structure rather than counts, unlike the character tables in the sibling
