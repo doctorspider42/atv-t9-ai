@@ -86,10 +86,18 @@ fun main(arguments: Array<String>) {
     if ("--tune" in options) {
         val sources = configurations.first().second
         println("weights, fitted on these attempts")
-        println("%-10s %-8s %10s %10s".format("frequency", "space", "phrases", "words"))
-        for (frequency in listOf(0.2, 0.35, 0.5, 0.7, 1.0)) {
-            for (space in listOf(0.5, 1.0, 2.0, 3.0)) {
-                val weights = Weights(frequency = frequency, space = space)
+        println("%-10s %-8s %-8s %10s %10s".format("frequency", "space", "context", "phrases", "words"))
+        for (frequency in listOf(0.35, 0.5, 0.7)) {
+            for (space in listOf(1.0, 2.0)) {
+                // What the word before is worth against what the word itself is worth. The pairs
+                // have a range of nine nats and the frequencies fifteen, so at equal weight the
+                // context is outvoted by construction rather than by evidence.
+                for (context in listOf(0.0, 1.0, 2.0, 4.0, 8.0)) {
+                val weights = Weights(
+                    frequency = frequency,
+                    space = space,
+                    languageModel = context,
+                )
                 val decoder = BeamDecoder(sources, weights = weights, width = 32)
                 var phrases = 0
                 var right = 0
@@ -103,10 +111,15 @@ fun main(arguments: Array<String>) {
                     right += wanted.indices.count { got.getOrNull(it) == wanted[it] }
                 }
                 println(
-                    "%-10.2f %-8.1f %9.1f%% %9.1f%%".format(
-                        frequency, space, 100.0 * phrases / rows.size, 100.0 * right / total
+                    "%-10.2f %-8.1f %-8.1f %9.1f%% %9.1f%%".format(
+                        frequency,
+                        space,
+                        context,
+                        100.0 * phrases / rows.size,
+                        100.0 * right / total,
                     )
                 )
+                }
             }
         }
         return

@@ -49,32 +49,41 @@ interface LanguageModel {
  * and the cost of one is that a word occasionally looks likelier after something than it is. That
  * is a wrong ranking in a rare place, against a table several times smaller everywhere.
  *
- * **Backs off rather than refusing.** A pair the table does not hold is not impossible — it is
- * unseen, which for two words that never met in a corpus of subtitles is the ordinary case. It
- * costs [BACKOFF], a fixed penalty against the pairs that were seen, and the word's own frequency
- * still speaks for it. A model that answered "impossible" would delete from the search every
- * sentence nobody has written down before, which is most of the sentences anybody types.
+ * **What it stores is how much the first word changes the second, not how likely the pair is.**
+ * The difference is the difference between a model that helps and one that destroys the decoder,
+ * and it was learned by doing the other thing: storing the pair's own probability means every pair
+ * the table does not hold needs a fixed cost, and that cost lands once per word — so a reading of
+ * four words pays it four times and a reading of one pays it once, and the decoder stops reading
+ * `dzikie ucho` and starts preferring `dzikiego`. Measured, word accuracy went from 61.8% to 40.6%
+ * at a weight of one and to 11% at two.
+ *
+ * So the number is pointwise mutual information: how much likelier this word is after that one
+ * than it is anywhere. A pair the table does not hold scores zero — the model has no information,
+ * which is not the same as evidence against — and the word's own frequency, which the decoder
+ * counts separately, is not counted twice.
  *
  * Format, big-endian, after the header:
  *
  *     magic     4 bytes  "T9B1"
- *     version   u8       1
- *     span      u16      the log range the score byte was scaled into, times 100
+ *     version   u8       2
+ *     floor     i16      the lowest stored value, in nats times 100
+ *     span      u16      the range the score byte covers, in nats times 100
  *     count     u32
  *     pairs     count x (u64 hash, u8 score)   ascending by hash
  */
 class Bigrams private constructor(
     private val hashes: LongArray,
     private val scores: ByteArray,
+    private val floor: Double,
     private val span: Double,
 ) : LanguageModel {
 
     override val isEmpty: Boolean get() = hashes.isEmpty()
 
     /**
-     * The stored byte is the log-probability scaled into 254 steps of [span], the commonest pair
-     * at the top. Unscaling it here keeps the file small and the arithmetic in nats, which is what
-     * everything else in the decoder speaks.
+     * The stored byte is the pair's mutual information scaled into 254 steps from [floor] up.
+     * Unscaling here keeps the file small and the arithmetic in nats, which is what the rest of
+     * the decoder speaks.
      */
     override fun score(previous: String?, word: String): Double {
         if (previous == null || hashes.isEmpty()) {
@@ -82,26 +91,25 @@ class Bigrams private constructor(
         }
         val found = hashes.binarySearch(hash(previous, word))
         if (found < 0) {
-            return BACKOFF
+            return NOTHING_KNOWN
         }
-        return ((scores[found].toInt() and 0xFF) - 255.0) * span / 254.0
+        return floor + ((scores[found].toInt() and 0xFF) - 1) * span / 254.0
     }
 
     companion object {
 
         const val MAGIC = "T9B1"
-        const val VERSION = 1
+        const val VERSION = 2
 
         /**
-         * What an unseen pair costs, in nats.
+         * What a pair the table does not hold is worth: nothing, in the arithmetical sense.
          *
-         * Chosen rather than counted, and it is the one number here that is: it stands for every
-         * pair the corpus never saw, which is by construction the thing there is no count for.
-         * Six nats puts an unseen pair below the rarest seen one without putting it below the
-         * difference between two ordinary words, so context can lose to frequency when it has
-         * nothing to say.
+         * Not a penalty. Two words that never met in a corpus of subtitles are the ordinary case
+         * rather than an impossibility, and any fixed cost here is paid once per word — which
+         * makes the model a tax on reading a query as several words instead of one, whatever else
+         * it was meant to do.
          */
-        const val BACKOFF = -6.0
+        const val NOTHING_KNOWN = 0.0
 
         /**
          * One number for two words, which is what the table is keyed by.
@@ -128,13 +136,15 @@ class Bigrams private constructor(
         fun read(input: InputStream): Bigrams {
             val bytes = input.readBytes()
             // The header alone, which is what a table with nothing in it is.
-            require(bytes.size >= 11) { "bigrams are truncated: ${bytes.size} bytes" }
+            require(bytes.size >= 13) { "bigrams are truncated: ${bytes.size} bytes" }
             require(String(bytes, 0, 4, Charsets.US_ASCII) == MAGIC) {
                 "not a bigram table: magic was ${String(bytes, 0, 4, Charsets.US_ASCII)}"
             }
             require(bytes[4].toInt() == VERSION) { "bigram version ${bytes[4]} is not $VERSION" }
 
             var at = 5
+            val floor = readShort(bytes, at).toShort() / 100.0
+            at += 2
             val span = readShort(bytes, at) / 100.0
             at += 2
             val count = readInt(bytes, at)
@@ -148,7 +158,7 @@ class Bigrams private constructor(
                 scores[pair] = bytes[at]
                 at += 1
             }
-            return Bigrams(hashes, scores, span)
+            return Bigrams(hashes, scores, floor, span)
         }
 
         private fun readShort(bytes: ByteArray, at: Int): Int =

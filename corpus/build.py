@@ -49,6 +49,13 @@ DEFAULT_RAW = os.path.join(HERE, "raw")
 DEFAULT_ASSETS = os.path.join(HERE, os.pardir, "app", "src", "main", "assets")
 
 MAGIC = b"T9D1"
+
+# What a pair's mutual information is clipped to, in nats. Below the floor the pair is telling us
+# the two words avoid each other, which is true and not worth a row; above the ceiling it is
+# usually a name that occurs only as part of one phrase, and letting it shout does more harm than
+# the phrase is worth.
+FLOOR = -2.0
+CEILING = 8.0
 VERSION = 1
 INDEX_STEP = 32
 ESCAPE = 0xFF
@@ -159,7 +166,14 @@ def count_pairs(language: str, raw: str, title_weight: int, vocabulary: set[str]
     return pairs
 
 
-def write_bigrams(language: str, pairs: Counter, keep: int, floor: int, out: str) -> None:
+def write_bigrams(
+    language: str,
+    pairs: Counter,
+    unigrams: Counter,
+    keep: int,
+    floor: int,
+    out: str,
+) -> None:
     """Writes the pairs worth keeping, as hashes rather than words.
 
     Two words cost several times what a hash of them costs, and the words are already in the
@@ -170,28 +184,55 @@ def write_bigrams(language: str, pairs: Counter, keep: int, floor: int, out: str
 
     Kept in hash order so the reader can binary search it without building anything at load.
 
+    **What is stored is how much the first word changes the second, not how likely the pair is.**
+    That distinction is the whole difference between a model that helps and one that destroys the
+    decoder, and it was learned the hard way. Storing the pair's own probability means every pair
+    the table does not hold has to be given some fixed cost, and that cost then lands once per
+    word: a reading of four words pays it four times and a reading of one pays it once, so the
+    decoder stops reading `dzikie ucho` and starts preferring `dzikiego` at any weight above zero.
+    Measured, it took word accuracy from 61.8% to 40.6% at a weight of one and to 11% at two.
+
+    So the number here is pointwise mutual information - log of how much likelier `b` is after `a`
+    than `b` is anywhere. An unseen pair then means "no information", which is zero and costs
+    nothing, and the word's own frequency, which the decoder counts separately, is not counted
+    twice.
+
+    Kept in hash order so the reader can binary search it without building anything at load.
+
     Format, big-endian:
 
         magic     4 bytes  "T9B1"
-        version   u8       1
-        span      u16      the log range the score byte was scaled into, times 100
+        version   u8       2
+        floor     i16      the lowest stored value, in nats times 100
+        span      u16      the range the score byte covers, in nats times 100
         count     u32
         pairs     count x (u64 hash, u8 score)   ascending by hash
+
+    A score byte `b` is `floor + (b - 1) * span / 254`.
     """
     chosen = [pair for pair in pairs.most_common() if pair[1] >= floor][:keep]
     if not chosen:
         raise SystemExit("no pairs survived the floor: is the corpus large enough?")
 
-    highest = chosen[0][1]
-    lowest = chosen[-1][1]
-    # The score byte is the log-probability of the pair, scaled so the rarest kept pair is 1 and
-    # the commonest is 255. The span travels in the file because the reader needs it to get back
-    # to nats, and it depends on the corpus rather than on the format.
-    span = math.log(highest) - math.log(lowest) or 1.0
+    # Kept by how often the pair occurs, scored by what it tells us. Those are different
+    # questions: a pair seen eight times has a wild mutual information and no business outranking
+    # one seen eight thousand, so frequency decides what is worth a row and the row says what the
+    # context is worth.
+    total = sum(unigrams.values())
+    scored = []
+    for (previous, word), count in chosen:
+        together = count / total
+        apart = (unigrams[previous] / total) * (unigrams[word] / total)
+        information = math.log(together / apart) if apart > 0 else 0.0
+        scored.append(((previous, word), max(FLOOR, min(CEILING, information))))
+
+    lowest = min(value for _, value in scored)
+    highest = max(value for _, value in scored)
+    span = (highest - lowest) or 1.0
 
     table = []
-    for (previous, word), count in chosen:
-        step = 1 + int(254 * (math.log(count) - math.log(lowest)) / span)
+    for (previous, word), information in scored:
+        step = 1 + int(254 * (information - lowest) / span)
         # Sorted as the reader compares them, which is signed: Kotlin has no unsigned long in its
         # arrays, so a hash with the top bit set is a negative number there and belongs first. Get
         # this wrong and the binary search quietly misses half the table.
@@ -202,7 +243,15 @@ def write_bigrams(language: str, pairs: Counter, keep: int, floor: int, out: str
     target = os.path.join(out, f"bigrams-{language}.bin")
     with open(target, "wb") as handle:
         handle.write(b"T9B1")
-        handle.write(struct.pack(">BHI", 1, min(65535, int(span * 100)), len(table)))
+        handle.write(
+            struct.pack(
+                ">BhHI",
+                2,
+                max(-32768, min(32767, int(lowest * 100))),
+                min(65535, int(span * 100)),
+                len(table),
+            )
+        )
         for value, step in table:
             handle.write(struct.pack(">QB", value & 0xFFFFFFFFFFFFFFFF, step))
 
@@ -370,7 +419,12 @@ def main() -> int:
             arguments.language, arguments.raw, arguments.title_weight, vocabulary
         )
         write_bigrams(
-            arguments.language, pairs, arguments.pairs, arguments.pair_floor, arguments.out
+            arguments.language,
+            pairs,
+            counts,
+            arguments.pairs,
+            arguments.pair_floor,
+            arguments.out,
         )
     return 0
 

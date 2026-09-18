@@ -210,12 +210,18 @@ class BeamDecoder(
         }
         val boundary = if (spacePressed) 0.0 else weights.space * errors.noSpace
 
+        val previous = state.words.lastOrNull()?.text
+
         return readings.map { reading ->
             val switch = when {
                 state.language == null || reading.language == null -> 0.0
                 state.language == reading.language -> 0.0
                 else -> weights.languageSwitch
             }
+            // What the word before says about this one, from the language this word was read as.
+            // This is the whole reason the beam can no longer merge two readings that differ only
+            // in a word already finished — see [Key].
+            val context = sources[reading.source].model.score(previous, reading.word)
             State(
                 prefix = "",
                 mistakes = state.mistakes,
@@ -228,7 +234,8 @@ class BeamDecoder(
                 ),
                 score = state.score + boundary + switch +
                     weights.frequency * reading.frequency +
-                    weights.languagePrior * reading.prior,
+                    weights.languagePrior * reading.prior +
+                    weights.languageModel * context,
                 language = reading.language,
                 from = at + 1,
             )

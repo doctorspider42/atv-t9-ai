@@ -34,7 +34,7 @@ class BigramsTest {
 
         assertTrue(known > rarer, "a common pair should beat a rare one")
         assertTrue(rarer > unseen, "a rare pair should still beat one never seen")
-        assertEquals(Bigrams.BACKOFF, unseen)
+        assertEquals(Bigrams.NOTHING_KNOWN, unseen)
     }
 
     /**
@@ -68,8 +68,8 @@ class BigramsTest {
         // search misses half the table and the model quietly says nothing at all.
         val model = table("z" to "jego" at 200, "ma" to "ma" at 120)
 
-        assertTrue(abs(model.score("z", "jego") - Bigrams.BACKOFF) > 0.001)
-        assertTrue(abs(model.score("ma", "ma") - Bigrams.BACKOFF) > 0.001)
+        assertTrue(abs(model.score("z", "jego") - Bigrams.NOTHING_KNOWN) > 0.001)
+        assertTrue(abs(model.score("ma", "ma") - Bigrams.NOTHING_KNOWN) > 0.001)
     }
 
     private class Pair(val previous: String, val word: String, val score: Int)
@@ -83,7 +83,8 @@ class BigramsTest {
         DataOutputStream(bytes).apply {
             write(Bigrams.MAGIC.encodeToByteArray())
             writeByte(Bigrams.VERSION)
-            writeShort(600) // a span of six nats, times a hundred
+            writeShort(-200) // the floor, two nats below zero, times a hundred
+            writeShort(1000) // and ten nats of range above it
             writeInt(sorted.size)
             for (pair in sorted) {
                 writeLong(Bigrams.hash(pair.previous, pair.word))
